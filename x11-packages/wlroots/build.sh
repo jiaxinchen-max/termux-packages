@@ -1,9 +1,9 @@
-TERMUX_PKG_HOMEPAGE=https://gitlab.freedesktop.org/wlroots/wlroots
+TERMUX_PKG_HOMEPAGE=https://gitlab.freedesktop.org//
 TERMUX_PKG_DESCRIPTION="Modular wayland compositor library"
 TERMUX_PKG_LICENSE="MIT"
 TERMUX_PKG_MAINTAINER="@termux"
 TERMUX_PKG_VERSION="0.18.2"
-TERMUX_PKG_SRCURL=http://172.17.0.2:8081/termux-packages/wlroots-termux.tar.gz
+TERMUX_PKG_SRCURL=http://172.17.0.2:8081/termux-packages/-termux.tar.gz
 TERMUX_PKG_SHA256=5ad151170d2c15311eae0bd87e0958272f2cc2b10a5a295bb7d8792f7d8a6a82
 TERMUX_PKG_AUTO_UPDATE=true
 TERMUX_PKG_DEPENDS="libdrm, libglvnd, libpixman, libwayland, libxcb, libxkbcommon, xcb-util-renderutil, xcb-util-wm, termux-gui-c, termux-display-client"
