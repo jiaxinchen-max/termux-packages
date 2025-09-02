@@ -8,7 +8,7 @@ index e4e8c8d8..b9a04d4c 100644
  
 +#if WLR_HAS_TERMUXGUI_BACKEND
 +#include <wlr/backend/termuxgui.h>
-+#endif
++#endifgit
 +
  #define WAIT_SESSION_TIMEOUT 10000 // ms
  
