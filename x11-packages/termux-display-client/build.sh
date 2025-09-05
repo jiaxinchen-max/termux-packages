@@ -7,7 +7,7 @@ TERMUX_PKG_VERSION=(0.0.1
 TERMUX_PKG_REVISION=1
 TERMUX_PKG_SRCURL=(http://127.0.0.1:8081/termux-packages/termux-display-client.tar.gz
                    https://xorg.freedesktop.org/releases/individual/xserver/xorg-server-${TERMUX_PKG_VERSION[1]}.tar.xz)
-TERMUX_PKG_SHA256=(0ec3434e2829c0af2263f3bc91a05b3aad7e01df1822ca6b3db2564373faf44a
+TERMUX_PKG_SHA256=(dd14f4f86a98714d9a0a88b737228cf1917d8bb54c84da67340ea80dc4b3b3c4
                    38aadb735650c8024ee25211c190bf8aad844c5f59632761ab1ef4c4d5aeb152)
 # TERMUX_PKG_BUILD_DEPENDS="xorg-server-xvfb"
 TERMUX_PKG_API_LEVEL="26"

@@ -32,6 +32,7 @@ if [ "${TERMUX_DOCKER__CONTAINER_EXEC_COMMAND__PRE_CHECK_IF_WILL_BUILD_PACKAGES:
 fi
 
 CONTAINER_HOME_DIR=/home/builder
+CONTAINER_WORKSPACE_DIR=/workspace
 UNAME=$(uname)
 if [ "$UNAME" = Darwin ]; then
 	# Workaround for mac readlink not supporting -f.
@@ -52,9 +53,9 @@ fi
 # To reset, use "restorecon -Fr ."
 # To check, use "ls -Z ."
 if [ -n "$(command -v getenforce)" ] && [ "$(getenforce)" = Enforcing ]; then
-	VOLUME=$REPOROOT:$CONTAINER_HOME_DIR/termux-packages:z
+	VOLUME=$REPOROOT:$CONTAINER_WORKSPACE_DIR/termux-packages:z
 else
-	VOLUME=$REPOROOT:$CONTAINER_HOME_DIR/termux-packages
+	VOLUME=$REPOROOT:$CONTAINER_WORKSPACE_DIR/termux-packages
 fi
 
 : ${TERMUX_BUILDER_IMAGE_NAME:=ghcr.io/termux/package-builder}

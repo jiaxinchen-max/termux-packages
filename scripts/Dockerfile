@@ -37,4 +37,4 @@ RUN apt-get update && \
 USER builder:builder
 
 # We expect this to be mounted with '-v $PWD:/home/builder/termux-packages':
-WORKDIR /home/builder/termux-packages
+WORKDIR /workspace/termux-packages
