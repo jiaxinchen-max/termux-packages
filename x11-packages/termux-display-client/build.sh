@@ -2,17 +2,16 @@ TERMUX_PKG_HOMEPAGE="https://github.com/jiaxinchen-max/termux-display-client"
 TERMUX_PKG_DESCRIPTION="An Android surface-based graphics rendering bridge that uses GLES and AHardwareBuff for acceleration. It helps software in the termux-package ecosystem perform cross-process graphics rendering."
 TERMUX_PKG_LICENSE="MPL-2.0"
 TERMUX_PKG_MAINTAINER="@chenjiaxin-max"
-TERMUX_PKG_VERSION=(0.0.1
-                    21.1.8)
+TERMUX_PKG_VERSION=(0.0.1)
 TERMUX_PKG_REVISION=1
 TERMUX_PKG_SRCURL=(http://127.0.0.1:8081/termux-packages/termux-display-client.tar.gz)
-TERMUX_PKG_SHA256=(dd14f4f86a98714d9a0a88b737228cf1917d8bb54c84da67340ea80dc4b3b3c4)
+TERMUX_PKG_SHA256=(e06a933dcce834d87852d76129c5bfa3c04d870aff4cbccb30a2013a960eb0ac)
 # TERMUX_PKG_BUILD_DEPENDS="xorg-server-xvfb"
 TERMUX_PKG_API_LEVEL="26"
 #TERMUX_PKG_DEPENDS="libpixman, libx11"
 TERMUX_PKG_AUTO_UPDATE=true
 TERMUX_PKG_UPDATE_TAG_TYPE="newest-tag"
-TERMUX_PKG_BUILD_IN_SRC=false
+# TERMUX_PKG_BUILD_IN_SRC=false
 
 #termux_step_post_get_source() {
 #	## TigerVNC requires sources of X server (either Xorg or Xvfb).
