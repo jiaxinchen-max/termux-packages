@@ -3,9 +3,10 @@ TERMUX_PKG_DESCRIPTION="Ambitious Vim-fork focused on extensibility and agility 
 TERMUX_PKG_LICENSE="Apache-2.0, VIM License"
 TERMUX_PKG_LICENSE_FILE="LICENSE.txt"
 TERMUX_PKG_MAINTAINER="Joshua Kahn <tom@termux.dev>"
-TERMUX_PKG_VERSION="0.12.0~dev-2340+g29a46a11aa"
+TERMUX_PKG_VERSION="0.12.0~dev-2727+gad4bc2d90c"
 TERMUX_PKG_SRCURL="https://github.com/neovim/neovim/archive/${TERMUX_PKG_VERSION##*+g}.tar.gz"
-TERMUX_PKG_SHA256=6df5a6180ad5b184c8f6d7ab3dc681c58f74aa4459dd7afb256a9bae9cf8825b
+TERMUX_PKG_SHA256=0be29fc6a29b49ccf95aa9cad083c22e884b7b6c9c94a51790afebb9d660b5ba
+TERMUX_PKG_REPOLOGY_METADATA_VERSION="${TERMUX_PKG_VERSION%%~*}"
 TERMUX_PKG_DEPENDS="libandroid-support, libiconv, libmsgpack, libunibilium, libuv, libvterm (>= 1:0.3-0), lua51-lpeg, luajit, luv, tree-sitter, tree-sitter-parsers, utf8proc"
 TERMUX_PKG_BREAKS="neovim"
 TERMUX_PKG_CONFLICTS="neovim"
@@ -16,10 +17,15 @@ TERMUX_PKG_UPDATE_VERSION_REGEXP="v.*-dev.*\+g[0-9a-f]*"
 TERMUX_PKG_UPDATE_VERSION_SED_REGEXP="s/-/~/"
 
 TERMUX_PKG_EXTRA_CONFIGURE_ARGS="
--DENABLE_JEMALLOC=OFF
 -DLUAJIT_INCLUDE_DIR=$TERMUX_PREFIX/include/luajit-2.1
 -DLPEG_LIBRARY=$TERMUX_PREFIX/lib/liblpeg-5.1.so
 -DCOMPILE_LUA=OFF
+"
+
+# Available since 0.12.0~dev-2459+g62135f5a57
+TERMUX_PKG_EXTRA_CONFIGURE_ARGS+="
+-DNLUA0_HOST_PRG=$TERMUX_PKG_HOSTBUILD_DIR/libnlua0.so
+-DNVIM_HOST_PRG=$TERMUX_PKG_HOSTBUILD_DIR/nvim
 "
 
 termux_pkg_auto_update() {
@@ -64,26 +70,17 @@ termux_step_host_build() {
 
 	make CMAKE_EXTRA_FLAGS="-DCMAKE_INSTALL_PREFIX=$TERMUX_PKG_HOSTBUILD_DIR -DUSE_BUNDLED_LUAROCKS=ON" install
 
-	# Copy away host-built libnlua0.so used by src/nvim/generators/preload.lua.
-	# We patch src/nvim/CMakeLists.txt to use this instead of the cross-compiled one.
-	cp ./build/lib/libnlua0.so "$TERMUX_PKG_HOSTBUILD_DIR/"
+	# Copy away host-built libnlua0.so for use as -DNLUA0_HOST_PRG
+	cp -vf ./build/lib/libnlua0.so "$TERMUX_PKG_HOSTBUILD_DIR/"
+
+	# Copy away host-built nvim for use as -DNVIM_HOST_PRG
+	cp -vf ./build/bin/nvim "$TERMUX_PKG_HOSTBUILD_DIR/"
 
 	make distclean
 	rm -Rf build/
 }
 
 termux_step_pre_configure() {
-	# msgfmt etc. need to be set here rather than globally, because if set globally,
-	# scripts/bin/update-checksum would fail to source this build.sh during the auto update
-	# workflow that doesn't have those commands present since it hasn't run setup-ubuntu.sh
-	TERMUX_PKG_EXTRA_CONFIGURE_ARGS+="
-	-DLUA_MATH_LIBRARY=$TERMUX_STANDALONE_TOOLCHAIN/sysroot/usr/lib/$TERMUX_HOST_PLATFORM/$TERMUX_PKG_API_LEVEL/libm.so
-	-DGETTEXT_MSGFMT_EXECUTABLE=$(command -v msgfmt)
-	-DGETTEXT_MSGMERGE_EXECUTABLE=$(command -v msgmerge)
-	-DPKG_CONFIG_EXECUTABLE=$(command -v pkg-config)
-	-DXGETTEXT_PRG=$(command -v xgettext)
-	"
-
 	# neovim has a weird CMake file that attempts to preprocess generated headers
 	# using the NDK Clang, but without ever adding the necessary --target argument
 	# to its commands for cross-preprocessing, so that must be done manually

@@ -10,10 +10,9 @@ TERMUX_PKG_CONFLICTS="vim-gtk"
 TERMUX_PKG_BREAKS="vim-python, vim-runtime"
 TERMUX_PKG_REPLACES="vim-python, vim-runtime"
 TERMUX_PKG_PROVIDES="vim-python"
-TERMUX_PKG_VERSION="9.2.0"
-TERMUX_PKG_REVISION=1
+TERMUX_PKG_VERSION="9.2.0250"
 TERMUX_PKG_SRCURL="https://github.com/vim/vim/archive/refs/tags/v${TERMUX_PKG_VERSION}.tar.gz"
-TERMUX_PKG_SHA256=9c60fc4488d78bbca9069e74e9cfafd006bdfcece5bb0971eac6268531f1b51f
+TERMUX_PKG_SHA256=ae90ce8a5d95e5e5147d1dedafd74bfb141024b5e5c61640102f2328814d6f17
 TERMUX_PKG_BUILD_IN_SRC=true
 TERMUX_PKG_CONFFILES="share/vim/vimrc"
 TERMUX_PKG_EXTRA_CONFIGURE_ARGS="
@@ -30,8 +29,9 @@ ac_cv_small_wchar_t=no
 --with-tlib=ncursesw
 --enable-multibyte
 --with-compiledby=Termux
+--enable-fail-if-missing=yes
 --enable-python3interp=dynamic
---with-python3-config-dir=$TERMUX_PYTHON_HOME/config-${TERMUX_PYTHON_VERSION}/
+--with-python3-config-dir=$TERMUX_PYTHON_HOME/config-${TERMUX_PYTHON_VERSION}-${TERMUX_HOST_PLATFORM}/
 vi_cv_path_python3_pfx=$TERMUX_PREFIX
 vi_cv_path_python3_include=${TERMUX_PREFIX}/include/python${TERMUX_PYTHON_VERSION}
 vi_cv_path_python3_platinclude=${TERMUX_PREFIX}/include/python${TERMUX_PYTHON_VERSION}
@@ -56,8 +56,11 @@ termux_pkg_auto_update() {
 	# remember to apply that change to the other as well.
 	local latest_tag current_patch latest_patch
 	latest_tag="$(termux_github_api_get_tag)"
-	latest_patch="${latest_tag##*.}"
-	current_patch="${TERMUX_PKG_VERSION##*.}"
+	# Specify Base 10 with the `10#` prefix.
+	# This is necessary to suppress automatic interpretation
+	# of the value as octal when there is a leading 0.
+	latest_patch="10#${latest_tag##*.}"
+	current_patch="10#${TERMUX_PKG_VERSION##*.}"
 
 	# Vim releases nearly every commit as a new tag.
 	# To avoid auto update spam, we only update Vim every 50th patch.
@@ -70,7 +73,8 @@ termux_pkg_auto_update() {
 		return
 	fi
 
-	termux_pkg_upgrade_version "${latest_tag%.*}.${latest_patch}"
+	# Pad the patch component of the version back to 4 digits in accordance with Vim's tag naming.
+	termux_pkg_upgrade_version "$(printf '%s.%04d' "${latest_tag%.*}" "${latest_patch}")"
 }
 
 termux_step_pre_configure() {
