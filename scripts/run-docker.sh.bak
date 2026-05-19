@@ -7,7 +7,9 @@ TERMUX_SCRIPTDIR=$(cd "$(realpath "$(dirname "$0")")"; cd ..; pwd)
 : ${TERMUX_DOCKER_RUN_EXTRA_ARGS:=}
 : ${TERMUX_DOCKER_EXEC_EXTRA_ARGS:=}
 BUILDSCRIPT_NAME=build-package.sh
+
 CONTAINER_HOME_DIR=/home/builder
+CONTAINER_WORKSPACE_DIR=/workspace
 
 _show_usage() {
 	echo "Usage: $0 [OPTIONS] [COMMAND]"
@@ -85,8 +87,6 @@ if [ "${dry_run}" = "true" ]; then
 	esac
 fi
 
-CONTAINER_HOME_DIR=/home/builder
-CONTAINER_WORKSPACE_DIR=/workspace
 UNAME=$(uname)
 if [ "$UNAME" = Darwin ]; then
 	# Workaround for mac readlink not supporting -f.
@@ -94,7 +94,7 @@ if [ "$UNAME" = Darwin ]; then
 	SEC_OPT=""
 else
 	REPOROOT="$(dirname $(readlink -f $0))/../"
-	SEC_OPT=" --security-opt seccomp=$REPOROOT/scripts/profile.json --security-opt apparmor=_custom-termux-package-builder-$CONTAINER_NAME --cap-add CAP_SYS_ADMIN --device /dev/fuse"
+	SEC_OPT=" --security-opt seccomp=$REPOROOT/scripts/profile.json --security-opt apparmor=unconfined --cap-add sys_admin --device /dev/fuse"
 fi
 
 if [ "${CI:-}" = "true" ]; then
