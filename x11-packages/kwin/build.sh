@@ -4,7 +4,7 @@ TERMUX_PKG_LICENSE="LGPL-2.0-or-later"
 TERMUX_PKG_MAINTAINER="@termux"
 TERMUX_PKG_VERSION="6.6.0"
 TERMUX_PKG_SRCURL="http://127.0.0.1:8081/termux-packages/kwin.tar.gz"
-TERMUX_PKG_SHA256=ba1422fb8ae04ed874a805a1fcee48129a98c18cfd8c35392de04226717ea236
+TERMUX_PKG_SHA256=2346a1e7bf9f627f559d2881294a651e106fa8273a12702cbc1dc2fd34fd3424
 TERMUX_PKG_AUTO_UPDATE=true
 TERMUX_PKG_HOSTBUILD=true
 TERMUX_PKG_DEPENDS="aurorae, breeze, kf6-kauth, kf6-kcmutils, kf6-kcolorscheme, kf6-kconfig, kf6-kcoreaddons, kf6-kcrash, kf6-kdeclarative, kdecoration, kf6-kglobalaccel, kglobalacceld, kf6-kguiaddons, kf6-ki18n, kf6-kidletime, kf6-kirigami, kf6-kitemmodels, kf6-knewstuff, kf6-knotifications, kf6-kpackage, kf6-kservice, kf6-ksvg, kf6-kwidgetsaddons, kf6-kwindowsystem, kf6-kxmlgui, knighttime, libc++, libcanberra, libdisplay-info, libdrm, libepoxy, libplasma, libqaccessibilityclient-qt6, libwayland, libx11, libxcb, libxi, libxkbcommon, littlecms, mesa, plasma-activities, qt6-qt5compat, qt6-qtbase, qt6-qtdeclarative, qt6-qtsensors, qt6-qtsvg, qt6-qttools, qt6-qtwayland, xcb-util-cursor, xcb-util-keysyms, xcb-util-wm,libxcvt,kwayland"
@@ -16,6 +16,7 @@ TERMUX_PKG_EXTRA_CONFIGURE_ARGS="
 -DBUILD_QT6=ON
 -DKWIN_BUILD_SCREENLOCKER=OFF
 -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF
+-DKWIN_USE_BUNDLED_FAKE_INPUT_LIBS=ON
 "
 
 termux_step_host_build() {
@@ -43,7 +44,11 @@ termux_step_host_build() {
 	mkdir -p "$TERMUX_PREFIX/opt/kf6/cross/bin"
 	cp "$TERMUX_PKG_HOSTBUILD_DIR/qtwaylandscanner_kde" "$TERMUX_PREFIX/opt/kf6/cross/bin/"
 }
-
+# termux_step_post_get_source() {
+# 	find "$TERMUX_PKG_SRCDIR" -type f -name '*.cpp' -print0 | while IFS= read -r -d '' f; do
+# 		sed -i -e "s|@TERMUX_PREFIX@|${TERMUX_PREFIX}|g" "$f"
+# 	done
+# }
 termux_step_pre_configure() {
 	rm -rf $TERMUX_HOSTBUILD_MARKER
 
