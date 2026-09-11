@@ -580,18 +580,6 @@
         },
         {
             "names": [
-                "mount",
-                "umount2"
-            ],
-            "action": "SCMP_ACT_ALLOW",
-            "includes": {
-                "caps": [
-                    "CAP_SYS_ADMIN"
-                ]
-            }
-        },
-        {
-            "names": [
                 "clone"
             ],
             "action": "SCMP_ACT_ALLOW",

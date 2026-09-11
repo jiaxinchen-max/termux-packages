@@ -128,17 +128,11 @@ termux_setup_toolchain_29() {
 		return
 	fi
 
-	[ -d "$TERMUX_STANDALONE_TOOLCHAIN" ] || mkdir -p "$TERMUX_STANDALONE_TOOLCHAIN"
-	[ -d "${TERMUX_STANDALONE_TOOLCHAIN}-upper" ] || mkdir -p "${TERMUX_STANDALONE_TOOLCHAIN}-upper"
-	[ -d "${TERMUX_STANDALONE_TOOLCHAIN}-work" ] || mkdir -p "${TERMUX_STANDALONE_TOOLCHAIN}-work"
-
-
-	if ! mountpoint -q "${TERMUX_STANDALONE_TOOLCHAIN}"; then
-		fuse-overlayfs \
-			"${TERMUX_STANDALONE_TOOLCHAIN}" \
-			-o lowerdir="${NDK}/toolchains/llvm/prebuilt/linux-x86_64" \
-			-o upperdir="${TERMUX_STANDALONE_TOOLCHAIN}-upper" \
-			-o workdir="${TERMUX_STANDALONE_TOOLCHAIN}-work"
+	# Keep an independent, writable toolchain copy without requiring a mount.
+	if [ ! -f "${TERMUX_STANDALONE_TOOLCHAIN}/.termux-standalone-toolchain" ]; then
+		rm -Rf "$TERMUX_STANDALONE_TOOLCHAIN"
+		cp -a "${NDK}/toolchains/llvm/prebuilt/linux-x86_64" \
+			"$TERMUX_STANDALONE_TOOLCHAIN"
 	fi
 
 	if [ -f "${TERMUX_STANDALONE_TOOLCHAIN}/.termux-standalone-toolchain" ]; then

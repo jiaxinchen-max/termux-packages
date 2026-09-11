@@ -43,12 +43,6 @@ profile _custom-termux-package-builder-{{CONTAINER_NAME}} flags=(attach_disconne
   # provided all other LSM and yama setting allow it.
   ptrace (trace,tracedby,read,readby) peer=_custom-termux-package-builder-{{CONTAINER_NAME}},
 
-  # Allow mounting fuse overlayfs filesystems in ~/.termux-build/
-	# This is used for mounting overlayfs of our build toolchain. This is
-	# more efficient than copying over the entire NDK as this takes up
-	# just under 50MB storage than 2.4GB
-	mount fstype=fuse.fuse-overlayfs -> /home/builder/.termux-build/**,
-
   # Deal with privilege escalation
 	deny capability setuid,
 	deny capability setgid,
