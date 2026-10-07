@@ -1,0 +1,1271 @@
+diff --git a/glamor/glamor.c b/glamor/glamor.c
+index b2bd34f..adab4e7 100644
+--- a/glamor/glamor.c
++++ b/glamor/glamor.c
+@@ -495,7 +495,9 @@ glamor_add_format(ScreenPtr screen, int depth, CARD32 render_format,
+         glDeleteTextures(1, &tex);
+         glDeleteFramebuffers(1, &fbo);
+ 
+-        if (!texture_only && (format != read_format || type != read_type)) {
++        if (!texture_only && (format != read_format || type != read_type) &&
++            !(getenv("XWAYLAND_AHB_GLAMOR") &&
++              (depth == 24 || depth == 32))) {
+             ErrorF("glamor: Implementation returned 0x%x/0x%x read format/type "
+                    "for depth %d, expected 0x%x/0x%x.  "
+                    "Falling back to software.\n",
+@@ -721,10 +723,6 @@ glamor_init(ScreenPtr screen, unsigned int flags)
+             goto fail;
+         }
+ 
+-        if (!epoxy_has_gl_extension("GL_OES_texture_border_clamp")) {
+-            ErrorF("GL_OES_texture_border_clamp required\n");
+-            goto fail;
+-        }
+     }
+ 
+     if (!epoxy_has_gl_extension("GL_ARB_vertex_array_object") &&
+diff --git a/glamor/glamor_render.c b/glamor/glamor_render.c
+index 1208b49..4e914ce 100644
+--- a/glamor/glamor_render.c
++++ b/glamor/glamor_render.c
+@@ -584,6 +584,7 @@ glamor_set_composite_texture(glamor_screen_private *glamor_priv, int unit,
+     glamor_pixmap_fbo *fbo = pixmap_priv->fbo;
+     float wh[4];
+     int repeat_type;
++    Bool has_texture_border_clamp;
+ 
+     glamor_make_current(glamor_priv);
+ 
+@@ -596,10 +597,15 @@ glamor_set_composite_texture(glamor_screen_private *glamor_priv, int unit,
+     glamor_bind_texture(glamor_priv, GL_TEXTURE0 + unit, fbo,
+                         dest_priv->fbo->is_red);
+     repeat_type = picture->repeatType;
++    has_texture_border_clamp =
++        epoxy_has_gl_extension("GL_OES_texture_border_clamp") ||
++        epoxy_has_gl_extension("GL_EXT_texture_border_clamp");
+     switch (picture->repeatType) {
+     case RepeatNone:
+-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,
++                        has_texture_border_clamp ? GL_CLAMP_TO_BORDER : GL_CLAMP_TO_EDGE);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,
++                        has_texture_border_clamp ? GL_CLAMP_TO_BORDER : GL_CLAMP_TO_EDGE);
+         break;
+     case RepeatNormal:
+         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+@@ -635,6 +641,7 @@ glamor_set_composite_texture(glamor_screen_private *glamor_priv, int unit,
+      * is RGB (no alpha), which we use for 16bpp textures.
+      */
+     if (glamor_pixmap_priv_is_large(pixmap_priv) ||
++        (!has_texture_border_clamp && repeat_type == RepeatNone) ||
+         (!PICT_FORMAT_A(picture->format) &&
+          repeat_type == RepeatNone && picture->transform)) {
+         glamor_pixmap_fbo_fix_wh_ratio(wh, pixmap, pixmap_priv);
+diff --git a/hw/xwayland/meson.build b/hw/xwayland/meson.build
+index 9fff644..de38db1 100644
+--- a/hw/xwayland/meson.build
++++ b/hw/xwayland/meson.build
+@@ -114,7 +114,9 @@ if build_xwayland_glamor
+               'xwayland-dmabuf.h',
+               'xwayland-dmabuf.c',
+               'xwayland-glamor-gbm.c',
+-              'xwayland-glamor-gbm.h'
++              'xwayland-glamor-gbm.h',
++              'xwayland-glamor-ahb.c',
++              'xwayland-glamor-ahb.h'
+             ]
+ 
+     if build_xv
+diff --git a/hw/xwayland/xwayland-glamor-ahb.c b/hw/xwayland/xwayland-glamor-ahb.c
+new file mode 100644
+index 0000000..1f009ba
+--- /dev/null
++++ b/hw/xwayland/xwayland-glamor-ahb.c
+@@ -0,0 +1,908 @@
++/* SPDX-License-Identifier: MIT */
++#include <xwayland-config.h>
++
++#include "xwayland-glamor-ahb.h"
++
++#ifdef __ANDROID__
++
++#include <android/hardware_buffer.h>
++#include <epoxy/egl.h>
++#include <epoxy/gl.h>
++#include <glamor.h>
++#include <glamor_context.h>
++#ifdef DRI3
++#include <dri3.h>
++#endif
++
++#include <dlfcn.h>
++#include <sys/socket.h>
++#include <unistd.h>
++
++#include "xwayland-glamor.h"
++#include "xwayland-pixmap.h"
++#include "xwayland-screen.h"
++#include "xwayland-window.h"
++
++#ifndef AHARDWAREBUFFER_FORMAT_B8G8R8A8_UNORM
++#define AHARDWAREBUFFER_FORMAT_B8G8R8A8_UNORM 5
++#endif
++#ifndef AHARDWAREBUFFER_FORMAT_R8G8B8X8_UNORM
++#define AHARDWAREBUFFER_FORMAT_R8G8B8X8_UNORM 2
++#endif
++
++#define TERMUX_AHB_BUFFER_FLAG_OPAQUE (1u << 0)
++#define TERMUX_AHB_BUFFER_FLAG_SWAP_RED_BLUE (1u << 1)
++
++struct xwl_ahb_private {
++    struct wl_proxy *manager;
++    EGLConfig config;
++    EGLSurface pbuffer;
++    Bool active;
++    void *android_library;
++    int (*allocate)(const AHardwareBuffer_Desc *, AHardwareBuffer **);
++    void (*describe)(const AHardwareBuffer *, AHardwareBuffer_Desc *);
++    void (*release)(AHardwareBuffer *);
++    int (*recv_handle)(int, AHardwareBuffer **);
++    int (*send_handle)(const AHardwareBuffer *, int);
++    int rgba_channel_order;
++    int bgra_channel_order;
++    uint32_t probe_token;
++    uint32_t probe_result;
++};
++
++enum xwl_ahb_channel_order {
++    XWL_AHB_CHANNEL_ORDER_UNKNOWN,
++    XWL_AHB_CHANNEL_ORDER_IDENTITY,
++    XWL_AHB_CHANNEL_ORDER_SWAP_RED_BLUE,
++};
++
++struct xwl_pixmap {
++    struct wl_buffer *buffer;
++    AHardwareBuffer *ahb;
++    EGLImageKHR image;
++    GLuint texture;
++};
++
++static DevPrivateKeyRec xwl_ahb_private_key;
++
++static const struct wl_interface *create_buffer_types[] = {
++    &wl_buffer_interface,
++    NULL,
++    NULL,
++};
++
++static const struct wl_interface *probe_buffer_types[] = {
++    NULL,
++    NULL,
++};
++
++static const struct wl_message manager_requests[] = {
++    { "destroy", "", NULL },
++    { "create_buffer", "nhu", create_buffer_types },
++    { "probe_buffer", "2hu", probe_buffer_types },
++};
++
++static const struct wl_message manager_events[] = {
++    { "probe_result", "2uu", NULL },
++};
++
++static const struct wl_interface manager_interface = {
++    "termux_ahardware_buffer_manager_v1",
++    2,
++    3,
++    manager_requests,
++    1,
++    manager_events,
++};
++
++struct xwl_ahb_manager_listener {
++    void (*probe_result)(void *data, struct wl_proxy *manager,
++                         uint32_t token, uint32_t channel_order);
++};
++
++static void
++xwl_ahb_manager_probe_result(void *data, struct wl_proxy *manager,
++                             uint32_t token, uint32_t channel_order)
++{
++    struct xwl_ahb_private *xwl_ahb = data;
++
++    if (token == xwl_ahb->probe_token)
++        xwl_ahb->probe_result = channel_order;
++}
++
++static const struct xwl_ahb_manager_listener manager_listener = {
++    .probe_result = xwl_ahb_manager_probe_result,
++};
++
++static struct xwl_ahb_private *
++xwl_ahb_get(struct xwl_screen *xwl_screen)
++{
++    return dixLookupPrivate(&xwl_screen->screen->devPrivates,
++                            &xwl_ahb_private_key);
++}
++
++static GLuint
++xwl_ahb_compile_shader(GLenum type, const char *source)
++{
++    GLuint shader = glCreateShader(type);
++    GLint compiled = GL_FALSE;
++
++    if (!shader)
++        return 0;
++    glShaderSource(shader, 1, &source, NULL);
++    glCompileShader(shader);
++    glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
++    if (!compiled) {
++        glDeleteShader(shader);
++        return 0;
++    }
++    return shader;
++}
++
++static enum xwl_ahb_channel_order
++xwl_ahb_probe_compositor_channel_order(struct xwl_screen *xwl_screen,
++                                       struct xwl_ahb_private *xwl_ahb,
++                                       AHardwareBuffer *ahb,
++                                       uint32_t token)
++{
++    int sockets[2] = { -1, -1 };
++
++    if (wl_proxy_get_version(xwl_ahb->manager) < 2 ||
++        socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sockets) < 0)
++        return XWL_AHB_CHANNEL_ORDER_UNKNOWN;
++    if (xwl_ahb->send_handle(ahb, sockets[0]) != 0)
++        goto error;
++
++    xwl_ahb->probe_token = token;
++    xwl_ahb->probe_result = XWL_AHB_CHANNEL_ORDER_UNKNOWN;
++    wl_proxy_marshal_flags(xwl_ahb->manager, 2, NULL,
++                           wl_proxy_get_version(xwl_ahb->manager), 0,
++                           sockets[1], token);
++    close(sockets[0]);
++    close(sockets[1]);
++    if (wl_display_roundtrip(xwl_screen->display) < 0)
++        return XWL_AHB_CHANNEL_ORDER_UNKNOWN;
++    return xwl_ahb->probe_result;
++
++error:
++    close(sockets[0]);
++    close(sockets[1]);
++    return XWL_AHB_CHANNEL_ORDER_UNKNOWN;
++}
++
++/* Render a known color into an AHardwareBuffer, destroy the producer-side
++ * EGLImage, import it again as a sampled texture and inspect the result. This
++ * catches drivers such as gfxstream that expose BGRA buffers with red and blue
++ * reversed on the consumer import path. */
++static enum xwl_ahb_channel_order
++xwl_ahb_probe_channel_order(struct xwl_screen *xwl_screen,
++                            struct xwl_ahb_private *xwl_ahb,
++                            uint32_t format)
++{
++    static const char vertex_source[] =
++        "attribute vec2 position;\n"
++        "varying vec2 texcoord;\n"
++        "void main() {\n"
++        "  texcoord = position * 0.5 + 0.5;\n"
++        "  gl_Position = vec4(position, 0.0, 1.0);\n"
++        "}\n";
++    static const char fragment_source[] =
++        "precision mediump float;\n"
++        "uniform sampler2D source;\n"
++        "varying vec2 texcoord;\n"
++        "void main() { gl_FragColor = texture2D(source, texcoord); }\n";
++    static const GLfloat vertices[] = {
++        -1.0f, -1.0f,
++         3.0f, -1.0f,
++        -1.0f,  3.0f,
++    };
++    const EGLint image_attributes[] = {
++        EGL_IMAGE_PRESERVED_KHR, EGL_TRUE,
++        EGL_NONE,
++    };
++    AHardwareBuffer_Desc description = { 0 };
++    AHardwareBuffer *ahb = NULL;
++    EGLClientBuffer client_buffer;
++    EGLImageKHR image = EGL_NO_IMAGE_KHR;
++    GLuint source_texture = 0;
++    GLuint source_fbo = 0;
++    GLuint destination_texture = 0;
++    GLuint destination_fbo = 0;
++    GLuint vertex_shader = 0;
++    GLuint fragment_shader = 0;
++    GLuint program = 0;
++    GLuint vertex_buffer = 0;
++    GLint linked = GL_FALSE;
++    GLubyte pixel[4] = { 0, 0, 0, 0 };
++    enum xwl_ahb_channel_order result = XWL_AHB_CHANNEL_ORDER_UNKNOWN;
++
++    description.width = 1;
++    description.height = 1;
++    description.layers = 1;
++    description.format = format;
++    description.usage = AHARDWAREBUFFER_USAGE_GPU_FRAMEBUFFER |
++                        AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE;
++    if (xwl_ahb->allocate(&description, &ahb) != 0)
++        goto out;
++
++    client_buffer = eglGetNativeClientBufferANDROID(ahb);
++    if (!client_buffer)
++        goto out;
++    image = eglCreateImageKHR(xwl_screen->egl_display, EGL_NO_CONTEXT,
++                              EGL_NATIVE_BUFFER_ANDROID, client_buffer,
++                              image_attributes);
++    if (image == EGL_NO_IMAGE_KHR)
++        goto out;
++    if (!eglMakeCurrent(xwl_screen->egl_display, xwl_ahb->pbuffer,
++                        xwl_ahb->pbuffer, xwl_screen->egl_context))
++        goto out;
++
++    glGenTextures(1, &source_texture);
++    glBindTexture(GL_TEXTURE_2D, source_texture);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++    glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, image);
++    glGenFramebuffers(1, &source_fbo);
++    glBindFramebuffer(GL_FRAMEBUFFER, source_fbo);
++    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
++                           GL_TEXTURE_2D, source_texture, 0);
++    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
++        goto out;
++    glViewport(0, 0, 1, 1);
++    glDisable(GL_BLEND);
++    glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
++    glClear(GL_COLOR_BUFFER_BIT);
++    glFinish();
++
++    if (wl_proxy_get_version(xwl_ahb->manager) >= 2) {
++        result = xwl_ahb_probe_compositor_channel_order(
++            xwl_screen, xwl_ahb, ahb, format);
++        goto out;
++    }
++
++    glBindFramebuffer(GL_FRAMEBUFFER, 0);
++    glDeleteFramebuffers(1, &source_fbo);
++    source_fbo = 0;
++    glDeleteTextures(1, &source_texture);
++    source_texture = 0;
++    eglDestroyImageKHR(xwl_screen->egl_display, image);
++    image = EGL_NO_IMAGE_KHR;
++
++    /* Import again so the probe follows the same consumer path as KWin. */
++    client_buffer = eglGetNativeClientBufferANDROID(ahb);
++    image = eglCreateImageKHR(xwl_screen->egl_display, EGL_NO_CONTEXT,
++                              EGL_NATIVE_BUFFER_ANDROID, client_buffer,
++                              image_attributes);
++    if (image == EGL_NO_IMAGE_KHR)
++        goto out;
++    if (!eglMakeCurrent(xwl_screen->egl_display, xwl_ahb->pbuffer,
++                        xwl_ahb->pbuffer, xwl_screen->egl_context))
++        goto out;
++
++    glGenTextures(1, &source_texture);
++    glBindTexture(GL_TEXTURE_2D, source_texture);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++    glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, image);
++
++    glGenTextures(1, &destination_texture);
++    glBindTexture(GL_TEXTURE_2D, destination_texture);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA,
++                 GL_UNSIGNED_BYTE, NULL);
++    glGenFramebuffers(1, &destination_fbo);
++    glBindFramebuffer(GL_FRAMEBUFFER, destination_fbo);
++    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
++                           GL_TEXTURE_2D, destination_texture, 0);
++    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
++        goto out;
++
++    vertex_shader = xwl_ahb_compile_shader(GL_VERTEX_SHADER, vertex_source);
++    fragment_shader = xwl_ahb_compile_shader(GL_FRAGMENT_SHADER,
++                                             fragment_source);
++    if (!vertex_shader || !fragment_shader)
++        goto out;
++    program = glCreateProgram();
++    glAttachShader(program, vertex_shader);
++    glAttachShader(program, fragment_shader);
++    glBindAttribLocation(program, 0, "position");
++    glLinkProgram(program);
++    glGetProgramiv(program, GL_LINK_STATUS, &linked);
++    if (!linked)
++        goto out;
++
++    glUseProgram(program);
++    glUniform1i(glGetUniformLocation(program, "source"), 0);
++    glActiveTexture(GL_TEXTURE0);
++    glBindTexture(GL_TEXTURE_2D, source_texture);
++    glGenBuffers(1, &vertex_buffer);
++    glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);
++    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
++    glEnableVertexAttribArray(0);
++    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, NULL);
++    glViewport(0, 0, 1, 1);
++    glDrawArrays(GL_TRIANGLES, 0, 3);
++    glPixelStorei(GL_PACK_ALIGNMENT, 1);
++    glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
++    glFinish();
++
++    if (pixel[0] > 192 && pixel[2] < 64)
++        result = XWL_AHB_CHANNEL_ORDER_IDENTITY;
++    else if (pixel[2] > 192 && pixel[0] < 64)
++        result = XWL_AHB_CHANNEL_ORDER_SWAP_RED_BLUE;
++
++out:
++    glBindFramebuffer(GL_FRAMEBUFFER, 0);
++    glBindBuffer(GL_ARRAY_BUFFER, 0);
++    glUseProgram(0);
++    if (vertex_buffer)
++        glDeleteBuffers(1, &vertex_buffer);
++    if (program)
++        glDeleteProgram(program);
++    if (vertex_shader)
++        glDeleteShader(vertex_shader);
++    if (fragment_shader)
++        glDeleteShader(fragment_shader);
++    if (destination_fbo)
++        glDeleteFramebuffers(1, &destination_fbo);
++    if (destination_texture)
++        glDeleteTextures(1, &destination_texture);
++    if (source_fbo)
++        glDeleteFramebuffers(1, &source_fbo);
++    if (source_texture)
++        glDeleteTextures(1, &source_texture);
++    if (image != EGL_NO_IMAGE_KHR)
++        eglDestroyImageKHR(xwl_screen->egl_display, image);
++    if (ahb)
++        xwl_ahb->release(ahb);
++    return result;
++}
++
++static Bool
++xwl_ahb_needs_red_blue_swap(struct xwl_ahb_private *xwl_ahb,
++                            uint32_t format)
++{
++    const char *override = getenv("TERMUX_AHB_SWIZZLE");
++
++    if (override) {
++        if (strcmp(override, "rb") == 0 || strcmp(override, "swap") == 0)
++            return TRUE;
++        if (strcmp(override, "none") == 0)
++            return FALSE;
++    }
++    if (format == AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM)
++        return xwl_ahb->rgba_channel_order == XWL_AHB_CHANNEL_ORDER_SWAP_RED_BLUE;
++    if (format == AHARDWAREBUFFER_FORMAT_B8G8R8A8_UNORM)
++        return xwl_ahb->bgra_channel_order == XWL_AHB_CHANNEL_ORDER_SWAP_RED_BLUE;
++    return FALSE;
++}
++
++Bool
++xwl_glamor_ahb_init(struct xwl_screen *xwl_screen)
++{
++    struct xwl_ahb_private *xwl_ahb;
++
++    if (!dixRegisterPrivateKey(&xwl_ahb_private_key, PRIVATE_SCREEN, 0))
++        return FALSE;
++
++    xwl_ahb = calloc(1, sizeof(*xwl_ahb));
++    if (!xwl_ahb)
++        return FALSE;
++
++    xwl_ahb->pbuffer = EGL_NO_SURFACE;
++    dixSetPrivate(&xwl_screen->screen->devPrivates, &xwl_ahb_private_key,
++                  xwl_ahb);
++    return TRUE;
++}
++
++void
++xwl_glamor_ahb_init_wl_registry(struct xwl_screen *xwl_screen,
++                                struct wl_registry *registry,
++                                uint32_t id, const char *interface,
++                                uint32_t version)
++{
++    struct xwl_ahb_private *xwl_ahb = xwl_ahb_get(xwl_screen);
++
++    if (xwl_ahb && !xwl_ahb->manager &&
++        strcmp(interface, manager_interface.name) == 0) {
++        xwl_ahb->manager = wl_registry_bind(registry, id, &manager_interface,
++                                            version < 2 ? version : 2);
++        wl_proxy_add_listener(xwl_ahb->manager,
++                              (void (**)(void)) &manager_listener, xwl_ahb);
++    }
++}
++
++Bool
++xwl_glamor_ahb_is_available(struct xwl_screen *xwl_screen)
++{
++    struct xwl_ahb_private *xwl_ahb = xwl_ahb_get(xwl_screen);
++    return xwl_ahb && xwl_ahb->manager;
++}
++
++Bool
++xwl_glamor_ahb_is_active(struct xwl_screen *xwl_screen)
++{
++    struct xwl_ahb_private *xwl_ahb = xwl_ahb_get(xwl_screen);
++    return xwl_ahb && xwl_ahb->active;
++}
++
++Bool
++xwl_glamor_ahb_init_egl(struct xwl_screen *xwl_screen)
++{
++    struct xwl_ahb_private *xwl_ahb = xwl_ahb_get(xwl_screen);
++    EGLint count = 0;
++    EGLint major = 0;
++    EGLint minor = 0;
++    const EGLint config_attributes[] = {
++        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
++        EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
++        EGL_RED_SIZE, 8,
++        EGL_GREEN_SIZE, 8,
++        EGL_BLUE_SIZE, 8,
++        EGL_ALPHA_SIZE, 8,
++        EGL_NONE,
++    };
++    const EGLint pbuffer_attributes[] = {
++        EGL_WIDTH, 1,
++        EGL_HEIGHT, 1,
++        EGL_NONE,
++    };
++    const EGLint context3_attributes[] = {
++        EGL_CONTEXT_CLIENT_VERSION, 3,
++        EGL_NONE,
++    };
++    const EGLint context2_attributes[] = {
++        EGL_CONTEXT_CLIENT_VERSION, 2,
++        EGL_NONE,
++    };
++
++    if (!xwl_ahb || !xwl_ahb->manager)
++        return FALSE;
++
++    xwl_ahb->android_library = dlopen("libandroid.so", RTLD_NOW | RTLD_LOCAL);
++    if (xwl_ahb->android_library) {
++        xwl_ahb->allocate = dlsym(xwl_ahb->android_library,
++                                  "AHardwareBuffer_allocate");
++        xwl_ahb->describe = dlsym(xwl_ahb->android_library,
++                                  "AHardwareBuffer_describe");
++        xwl_ahb->release = dlsym(xwl_ahb->android_library,
++                                 "AHardwareBuffer_release");
++        xwl_ahb->recv_handle = dlsym(
++            xwl_ahb->android_library,
++            "AHardwareBuffer_recvHandleFromUnixSocket");
++        xwl_ahb->send_handle = dlsym(
++            xwl_ahb->android_library,
++            "AHardwareBuffer_sendHandleToUnixSocket");
++    }
++    if (!xwl_ahb->allocate || !xwl_ahb->describe || !xwl_ahb->release ||
++        !xwl_ahb->recv_handle || !xwl_ahb->send_handle)
++        goto error;
++
++    xwl_screen->egl_display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
++    if (xwl_screen->egl_display == EGL_NO_DISPLAY ||
++        !eglInitialize(xwl_screen->egl_display, &major, &minor))
++        goto error;
++
++    if (!eglBindAPI(EGL_OPENGL_ES_API) ||
++        !eglChooseConfig(xwl_screen->egl_display, config_attributes,
++                         &xwl_ahb->config, 1, &count) || count == 0)
++        goto error;
++
++    xwl_ahb->pbuffer = eglCreatePbufferSurface(xwl_screen->egl_display,
++                                               xwl_ahb->config,
++                                               pbuffer_attributes);
++    if (xwl_ahb->pbuffer == EGL_NO_SURFACE)
++        goto error;
++
++    xwl_screen->egl_context = eglCreateContext(xwl_screen->egl_display,
++                                               xwl_ahb->config,
++                                               EGL_NO_CONTEXT,
++                                               context3_attributes);
++    if (xwl_screen->egl_context == EGL_NO_CONTEXT) {
++        xwl_screen->egl_context = eglCreateContext(xwl_screen->egl_display,
++                                                   xwl_ahb->config,
++                                                   EGL_NO_CONTEXT,
++                                                   context2_attributes);
++    }
++    if (xwl_screen->egl_context == EGL_NO_CONTEXT ||
++        !eglMakeCurrent(xwl_screen->egl_display, xwl_ahb->pbuffer,
++                        xwl_ahb->pbuffer, xwl_screen->egl_context))
++        goto error;
++
++    if (!epoxy_has_egl_extension(xwl_screen->egl_display,
++                                 "EGL_ANDROID_image_native_buffer") ||
++        !epoxy_has_gl_extension("GL_OES_EGL_image"))
++        goto error;
++
++    xwl_ahb->rgba_channel_order = xwl_ahb_probe_channel_order(
++        xwl_screen, xwl_ahb, AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM);
++    xwl_ahb->bgra_channel_order = xwl_ahb_probe_channel_order(
++        xwl_screen, xwl_ahb, AHARDWAREBUFFER_FORMAT_B8G8R8A8_UNORM);
++
++    /* gfxstream reports identity for tiny probe resources but reverses red
++     * and blue for the real BGRA GLX render targets. Keep this narrowly
++     * scoped driver quirk after the protocol round-trip probe. */
++    const char *renderer = (const char *) glGetString(GL_RENDERER);
++    if (!getenv("TERMUX_AHB_SWIZZLE") && renderer &&
++        (strstr(renderer, "Android Emulator OpenGL ES Translator") ||
++         strstr(renderer, "gfxstream"))) {
++        xwl_ahb->bgra_channel_order = XWL_AHB_CHANNEL_ORDER_SWAP_RED_BLUE;
++    }
++    LogMessage(X_INFO,
++               "Xwayland AHB channel probe: RGBA=%s BGRA=%s override=%s\n",
++               xwl_ahb->rgba_channel_order == XWL_AHB_CHANNEL_ORDER_SWAP_RED_BLUE ? "swap-rb" :
++               xwl_ahb->rgba_channel_order == XWL_AHB_CHANNEL_ORDER_IDENTITY ? "identity" : "unknown",
++               xwl_ahb->bgra_channel_order == XWL_AHB_CHANNEL_ORDER_SWAP_RED_BLUE ? "swap-rb" :
++               xwl_ahb->bgra_channel_order == XWL_AHB_CHANNEL_ORDER_IDENTITY ? "identity" : "unknown",
++               getenv("TERMUX_AHB_SWIZZLE") ? getenv("TERMUX_AHB_SWIZZLE") : "auto");
++
++    /* GLVND has no Android vendor module in Termux.  Keep Mesa as the GLX
++     * client vendor; Xwayland's own glamor context still uses system EGL. */
++    xwl_screen->glvnd_vendor = strdup("mesa");
++    setenv("XWAYLAND_AHB_GLAMOR", "1", 1);
++    xwl_ahb->active = TRUE;
++    LogMessage(X_INFO, "Xwayland glamor: Android AHardwareBuffer backend, EGL %d.%d, %s\n",
++               major, minor, glGetString(GL_RENDERER));
++    return TRUE;
++
++error:
++    ErrorF("Xwayland glamor: Android AHardwareBuffer EGL initialization failed (0x%x)\n",
++           eglGetError());
++    if (xwl_screen->egl_context != EGL_NO_CONTEXT) {
++        eglDestroyContext(xwl_screen->egl_display, xwl_screen->egl_context);
++        xwl_screen->egl_context = EGL_NO_CONTEXT;
++    }
++    if (xwl_ahb->pbuffer != EGL_NO_SURFACE) {
++        eglDestroySurface(xwl_screen->egl_display, xwl_ahb->pbuffer);
++        xwl_ahb->pbuffer = EGL_NO_SURFACE;
++    }
++    if (xwl_screen->egl_display != EGL_NO_DISPLAY) {
++        eglTerminate(xwl_screen->egl_display);
++        xwl_screen->egl_display = EGL_NO_DISPLAY;
++    }
++    return FALSE;
++}
++
++void
++xwl_glamor_ahb_make_current(struct glamor_context *glamor_ctx)
++{
++    if (!eglMakeCurrent(glamor_ctx->display, glamor_ctx->surface,
++                        glamor_ctx->surface, glamor_ctx->ctx))
++        FatalError("Failed to make Android EGL context current\n");
++}
++
++EGLSurface
++xwl_glamor_ahb_surface(struct xwl_screen *xwl_screen)
++{
++    struct xwl_ahb_private *xwl_ahb = xwl_ahb_get(xwl_screen);
++    return xwl_ahb ? xwl_ahb->pbuffer : EGL_NO_SURFACE;
++}
++
++static struct wl_buffer *
++xwl_ahb_create_wl_buffer(struct xwl_ahb_private *xwl_ahb,
++                         AHardwareBuffer *ahb, uint32_t flags)
++{
++    struct wl_buffer *buffer = NULL;
++    int sockets[2] = { -1, -1 };
++
++    if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sockets) < 0)
++        return NULL;
++
++    if (xwl_ahb->send_handle(ahb, sockets[0]) == 0) {
++        buffer = (struct wl_buffer *) wl_proxy_marshal_flags(
++            xwl_ahb->manager, 1, &wl_buffer_interface,
++            wl_proxy_get_version(xwl_ahb->manager), 0, NULL, sockets[1],
++            flags);
++    }
++
++    close(sockets[0]);
++    close(sockets[1]);
++    return buffer;
++}
++
++static const struct wl_buffer_listener xwl_ahb_buffer_listener = {
++    xwl_pixmap_buffer_release_cb,
++};
++
++static PixmapPtr
++xwl_glamor_ahb_wrap_pixmap(ScreenPtr screen, AHardwareBuffer *ahb,
++                           int width, int height, int depth, Bool clear)
++{
++    struct xwl_screen *xwl_screen = xwl_screen_get(screen);
++    struct xwl_ahb_private *xwl_ahb = xwl_ahb_get(xwl_screen);
++    struct xwl_pixmap *xwl_pixmap = NULL;
++    PixmapPtr pixmap = NULL;
++    Bool texture_attached = FALSE;
++    EGLClientBuffer client_buffer;
++    PFNGLGENTEXTURESPROC egl_gen_textures;
++    const EGLint image_attributes[] = {
++        EGL_IMAGE_PRESERVED_KHR, EGL_TRUE,
++        EGL_NONE,
++    };
++    AHardwareBuffer_Desc description = { 0 };
++    uint32_t buffer_flags;
++
++    /* Wayland event handling may run after another EGL context was made
++     * current.  All GL objects backing the pixmap must belong to glamor's
++     * context, just like in the GBM backend. */
++    xwl_glamor_ahb_make_current(xwl_screen->glamor_ctx);
++
++    egl_gen_textures = (PFNGLGENTEXTURESPROC)
++        eglGetProcAddress("glGenTextures");
++
++    xwl_pixmap = calloc(1, sizeof(*xwl_pixmap));
++    if (!xwl_pixmap) {
++        xwl_ahb->release(ahb);
++        return NullPixmap;
++    }
++    xwl_pixmap->image = EGL_NO_IMAGE_KHR;
++    xwl_pixmap->ahb = ahb;
++    xwl_ahb->describe(ahb, &description);
++
++    if (egl_gen_textures)
++        egl_gen_textures(1, &xwl_pixmap->texture);
++    else
++        glGenTextures(1, &xwl_pixmap->texture);
++    if (xwl_pixmap->texture == 0) {
++        ErrorF("Xwayland AHB: glGenTextures failed for %dx%d depth %d "
++               "(context %p/%p, surface %p/%p, GL error 0x%x)\n",
++               width, height, depth, eglGetCurrentContext(),
++               xwl_screen->glamor_ctx->ctx, eglGetCurrentSurface(EGL_DRAW),
++               xwl_screen->glamor_ctx->surface, glGetError());
++        goto error;
++    }
++
++    client_buffer = eglGetNativeClientBufferANDROID(xwl_pixmap->ahb);
++    if (!client_buffer) {
++        ErrorF("Xwayland AHB: eglGetNativeClientBufferANDROID failed\n");
++        goto error;
++    }
++    xwl_pixmap->image = eglCreateImageKHR(xwl_screen->egl_display,
++                                          EGL_NO_CONTEXT,
++                                          EGL_NATIVE_BUFFER_ANDROID,
++                                          client_buffer,
++                                          image_attributes);
++    if (xwl_pixmap->image == EGL_NO_IMAGE_KHR) {
++        ErrorF("Xwayland AHB: eglCreateImageKHR failed (0x%x)\n",
++               eglGetError());
++        goto error;
++    }
++
++    /* gfxstream's native-buffer import disturbs GL dispatch even though EGL
++     * still reports the same context as current.  Rebind it before touching
++     * the imported image. */
++    xwl_glamor_ahb_make_current(xwl_screen->glamor_ctx);
++
++    pixmap = glamor_create_pixmap(screen, width, height, depth,
++                                  GLAMOR_CREATE_PIXMAP_NO_TEXTURE);
++    if (!pixmap) {
++        ErrorF("Xwayland AHB: glamor_create_pixmap failed\n");
++        goto error;
++    }
++
++    glBindTexture(GL_TEXTURE_2D, xwl_pixmap->texture);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++    while (glGetError() != GL_NO_ERROR)
++        ;
++    glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, xwl_pixmap->image);
++    GLenum image_error = glGetError();
++    if (image_error != GL_NO_ERROR) {
++        ErrorF("Xwayland AHB: glEGLImageTargetTexture2DOES failed (0x%x)\n",
++               image_error);
++        goto error;
++    }
++    if (!glamor_set_pixmap_texture(pixmap, xwl_pixmap->texture)) {
++        ErrorF("Xwayland AHB: glamor_set_pixmap_texture failed\n");
++        goto error;
++    }
++    texture_attached = TRUE;
++
++    buffer_flags = depth == 24 ? TERMUX_AHB_BUFFER_FLAG_OPAQUE : 0;
++    if (xwl_ahb_needs_red_blue_swap(xwl_ahb, description.format))
++        buffer_flags |= TERMUX_AHB_BUFFER_FLAG_SWAP_RED_BLUE;
++    xwl_pixmap->buffer = xwl_ahb_create_wl_buffer(xwl_ahb,
++                                                   xwl_pixmap->ahb,
++                                                   buffer_flags);
++    if (!xwl_pixmap->buffer) {
++        ErrorF("Xwayland AHB: Wayland wl_buffer creation failed\n");
++        goto error;
++    }
++
++    glamor_set_pixmap_type(pixmap, GLAMOR_TEXTURE_DRM);
++    xwl_pixmap_set_private(pixmap, xwl_pixmap);
++    wl_buffer_add_listener(xwl_pixmap->buffer, &xwl_ahb_buffer_listener,
++                           pixmap);
++    if (clear)
++        glamor_clear_pixmap(pixmap);
++    return pixmap;
++
++error:
++    if (pixmap) {
++        glamor_destroy_pixmap(pixmap);
++        if (texture_attached)
++            xwl_pixmap->texture = 0;
++    }
++    if (xwl_pixmap) {
++        if (xwl_pixmap->texture)
++            glDeleteTextures(1, &xwl_pixmap->texture);
++        if (xwl_pixmap->image != EGL_NO_IMAGE_KHR)
++            eglDestroyImageKHR(xwl_screen->egl_display, xwl_pixmap->image);
++        if (xwl_pixmap->ahb)
++            xwl_ahb->release(xwl_pixmap->ahb);
++        free(xwl_pixmap);
++    }
++    return NullPixmap;
++}
++
++static PixmapPtr
++xwl_glamor_ahb_create_pixmap(ScreenPtr screen, int width, int height,
++                             int depth, unsigned int hint)
++{
++    struct xwl_screen *xwl_screen = xwl_screen_get(screen);
++    struct xwl_ahb_private *xwl_ahb = xwl_ahb_get(xwl_screen);
++    AHardwareBuffer_Desc description = { 0 };
++    AHardwareBuffer *ahb = NULL;
++
++    if (width <= 0 || height <= 0 ||
++        (depth != 24 && depth != 32) ||
++        (hint != CREATE_PIXMAP_USAGE_BACKING_PIXMAP &&
++         hint != CREATE_PIXMAP_USAGE_SHARED &&
++         !(xwl_screen->rootless && hint == 0)))
++        return glamor_create_pixmap(screen, width, height, depth, hint);
++
++    description.width = width;
++    description.height = height;
++    description.layers = 1;
++    description.format = AHARDWAREBUFFER_FORMAT_B8G8R8A8_UNORM;
++    description.usage = AHARDWAREBUFFER_USAGE_GPU_FRAMEBUFFER |
++                        AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE;
++    if (xwl_ahb->allocate(&description, &ahb) != 0)
++        return NullPixmap;
++
++    return xwl_glamor_ahb_wrap_pixmap(
++        screen, ahb, width, height, depth,
++        xwl_screen->rootless && hint == CREATE_PIXMAP_USAGE_BACKING_PIXMAP);
++}
++
++#ifdef DRI3
++static PixmapPtr
++xwl_glamor_ahb_pixmap_from_fd(ScreenPtr screen, int fd,
++                              CARD16 width, CARD16 height, CARD16 stride,
++                              CARD8 depth, CARD8 bpp)
++{
++    struct xwl_screen *xwl_screen = xwl_screen_get(screen);
++    struct xwl_ahb_private *xwl_ahb = xwl_ahb_get(xwl_screen);
++    AHardwareBuffer_Desc description = { 0 };
++    AHardwareBuffer *ahb = NULL;
++
++    if (width == 0 || height == 0 ||
++        (depth != 24 && depth != 32) || bpp != 32 ||
++        stride < width * 4)
++        return NullPixmap;
++
++    int receive_result = xwl_ahb->recv_handle(fd, &ahb);
++    if (receive_result != 0 || !ahb) {
++        ErrorF("Xwayland AHB DRI3: receive handle failed (%d, %p)\n",
++               receive_result, ahb);
++        return NullPixmap;
++    }
++
++    xwl_ahb->describe(ahb, &description);
++    LogMessage(X_INFO,
++               "Xwayland AHB DRI3: received %ux%u stride %u format %u "
++               "layers %u usage 0x%llx\n",
++               description.width, description.height, description.stride,
++               description.format, description.layers,
++               (unsigned long long)description.usage);
++    if (description.width != width || description.height != height ||
++        description.layers != 1 ||
++        (description.format != AHARDWAREBUFFER_FORMAT_B8G8R8A8_UNORM &&
++         description.format != AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM &&
++         description.format != AHARDWAREBUFFER_FORMAT_R8G8B8X8_UNORM) ||
++        !(description.usage & AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE)) {
++        ErrorF("Xwayland AHB DRI3: rejected handle metadata\n");
++        xwl_ahb->release(ahb);
++        return NullPixmap;
++    }
++
++    LogMessageVerb(X_INFO, 3,
++                   "Xwayland AHB DRI3: imported client buffer %dx%d\n",
++                   width, height);
++    return xwl_glamor_ahb_wrap_pixmap(screen, ahb, width, height, depth,
++                                      FALSE);
++}
++
++static const dri3_screen_info_rec xwl_ahb_dri3_info = {
++    .version = 0,
++    .pixmap_from_fd = xwl_glamor_ahb_pixmap_from_fd,
++};
++#endif
++
++PixmapPtr
++xwl_glamor_ahb_create_pixmap_for_window(struct xwl_window *xwl_window)
++{
++    WindowPtr window = xwl_window->surface_window;
++    unsigned border_width = 2 * window->borderWidth;
++
++    return xwl_glamor_ahb_create_pixmap(
++        xwl_window->xwl_screen->screen,
++        window->drawable.width + border_width,
++        window->drawable.height + border_width,
++        window->drawable.depth,
++        CREATE_PIXMAP_USAGE_BACKING_PIXMAP);
++}
++
++static Bool
++xwl_glamor_ahb_destroy_pixmap(PixmapPtr pixmap)
++{
++    struct xwl_screen *xwl_screen = xwl_screen_get(pixmap->drawable.pScreen);
++    struct xwl_ahb_private *xwl_ahb = xwl_ahb_get(xwl_screen);
++    struct xwl_pixmap *xwl_pixmap = xwl_pixmap_get(pixmap);
++
++    if (xwl_pixmap && pixmap->refcnt == 1) {
++        xwl_pixmap_del_buffer_release_cb(pixmap);
++        if (xwl_pixmap->buffer)
++            wl_buffer_destroy(xwl_pixmap->buffer);
++        if (xwl_pixmap->image != EGL_NO_IMAGE_KHR)
++            eglDestroyImageKHR(xwl_screen->egl_display, xwl_pixmap->image);
++        if (xwl_pixmap->ahb)
++            xwl_ahb->release(xwl_pixmap->ahb);
++        free(xwl_pixmap);
++    }
++    return glamor_destroy_pixmap(pixmap);
++}
++
++struct wl_buffer *
++xwl_glamor_ahb_pixmap_get_wl_buffer(PixmapPtr pixmap)
++{
++    struct xwl_pixmap *xwl_pixmap = xwl_pixmap_get(pixmap);
++
++    if (!xwl_pixmap || !xwl_pixmap->buffer)
++        return NULL;
++
++    return xwl_pixmap->buffer;
++}
++
++Bool
++xwl_glamor_ahb_init_screen(struct xwl_screen *xwl_screen)
++{
++#ifdef DRI3
++    /* In AHB mode the fd carried by DRI3PixmapFromBuffer is a Unix socket
++     * containing an AHardwareBuffer native handle, not a dma-buf.  This is a
++     * private Termux client/server ABI used by the Android EGL bridge. */
++    glamor_enable_dri3(xwl_screen->screen);
++    if (!dri3_screen_init(xwl_screen->screen, &xwl_ahb_dri3_info)) {
++        ErrorF("Xwayland AHB: failed to initialize DRI3 import bridge\n");
++        return FALSE;
++    }
++#endif
++    xwl_screen->screen->CreatePixmap = xwl_glamor_ahb_create_pixmap;
++    xwl_screen->screen->DestroyPixmap = xwl_glamor_ahb_destroy_pixmap;
++    return TRUE;
++}
++
++#else
++
++Bool xwl_glamor_ahb_init(struct xwl_screen *xwl_screen) { return FALSE; }
++void xwl_glamor_ahb_init_wl_registry(struct xwl_screen *xwl_screen,
++                                     struct wl_registry *registry,
++                                     uint32_t id, const char *interface,
++                                     uint32_t version) {}
++Bool xwl_glamor_ahb_is_available(struct xwl_screen *xwl_screen) { return FALSE; }
++Bool xwl_glamor_ahb_is_active(struct xwl_screen *xwl_screen) { return FALSE; }
++Bool xwl_glamor_ahb_init_egl(struct xwl_screen *xwl_screen) { return FALSE; }
++Bool xwl_glamor_ahb_init_screen(struct xwl_screen *xwl_screen) { return FALSE; }
++void xwl_glamor_ahb_make_current(struct glamor_context *glamor_ctx) {}
++EGLSurface xwl_glamor_ahb_surface(struct xwl_screen *xwl_screen) { return EGL_NO_SURFACE; }
++PixmapPtr xwl_glamor_ahb_create_pixmap_for_window(struct xwl_window *xwl_window) { return NullPixmap; }
++struct wl_buffer *xwl_glamor_ahb_pixmap_get_wl_buffer(PixmapPtr pixmap) { return NULL; }
++
++#endif
+diff --git a/hw/xwayland/xwayland-glamor-ahb.h b/hw/xwayland/xwayland-glamor-ahb.h
+new file mode 100644
+index 0000000..ee7e96f
+--- /dev/null
++++ b/hw/xwayland/xwayland-glamor-ahb.h
+@@ -0,0 +1,31 @@
++/* SPDX-License-Identifier: MIT */
++#ifndef XWAYLAND_GLAMOR_AHB_H
++#define XWAYLAND_GLAMOR_AHB_H
++
++#include <xwayland-config.h>
++
++#include <epoxy/egl.h>
++#include <wayland-client.h>
++
++#include "misc.h"
++#include "pixmapstr.h"
++
++#include "xwayland-types.h"
++
++struct glamor_context;
++
++Bool xwl_glamor_ahb_init(struct xwl_screen *xwl_screen);
++void xwl_glamor_ahb_init_wl_registry(struct xwl_screen *xwl_screen,
++                                     struct wl_registry *registry,
++                                     uint32_t id, const char *interface,
++                                     uint32_t version);
++Bool xwl_glamor_ahb_is_available(struct xwl_screen *xwl_screen);
++Bool xwl_glamor_ahb_is_active(struct xwl_screen *xwl_screen);
++Bool xwl_glamor_ahb_init_egl(struct xwl_screen *xwl_screen);
++Bool xwl_glamor_ahb_init_screen(struct xwl_screen *xwl_screen);
++void xwl_glamor_ahb_make_current(struct glamor_context *glamor_ctx);
++EGLSurface xwl_glamor_ahb_surface(struct xwl_screen *xwl_screen);
++PixmapPtr xwl_glamor_ahb_create_pixmap_for_window(struct xwl_window *xwl_window);
++struct wl_buffer *xwl_glamor_ahb_pixmap_get_wl_buffer(PixmapPtr pixmap);
++
++#endif
+diff --git a/hw/xwayland/xwayland-glamor-gbm.c b/hw/xwayland/xwayland-glamor-gbm.c
+index 05668b8..2bcd76f 100644
+--- a/hw/xwayland/xwayland-glamor-gbm.c
++++ b/hw/xwayland/xwayland-glamor-gbm.c
+@@ -56,6 +56,7 @@
+ #include "drm-client-protocol.h"
+ 
+ #include "xwayland-glamor.h"
++#include "xwayland-glamor-ahb.h"
+ #include "xwayland-glamor-gbm.h"
+ #include "xwayland-pixmap.h"
+ #include "xwayland-screen.h"
+@@ -436,6 +437,9 @@ xwl_glamor_create_pixmap_for_window(struct xwl_window *xwl_window)
+     if (!xwl_screen->glamor)
+         return NullPixmap;
+ 
++    if (xwl_glamor_ahb_is_active(xwl_screen))
++        return xwl_glamor_ahb_create_pixmap_for_window(xwl_window);
++
+     return xwl_glamor_gbm_create_pixmap_internal(xwl_screen,
+                                                  &window->drawable,
+                                                  window->drawable.width + border_width,
+@@ -545,7 +549,7 @@ xwl_glamor_pixmap_get_wl_buffer(PixmapPtr pixmap)
+ {
+     struct xwl_screen *xwl_screen = xwl_screen_get(pixmap->drawable.pScreen);
+     struct xwl_pixmap *xwl_pixmap = xwl_pixmap_get(pixmap);
+-    struct xwl_gbm_private *xwl_gbm = xwl_gbm_get(xwl_screen);
++    struct xwl_gbm_private *xwl_gbm;
+     unsigned short width = pixmap->drawable.width;
+     unsigned short height = pixmap->drawable.height;
+     uint32_t format;
+@@ -556,6 +560,11 @@ xwl_glamor_pixmap_get_wl_buffer(PixmapPtr pixmap)
+     uint64_t modifier;
+     int i;
+ 
++    if (xwl_glamor_ahb_is_active(xwl_screen))
++        return xwl_glamor_ahb_pixmap_get_wl_buffer(pixmap);
++
++    xwl_gbm = xwl_gbm_get(xwl_screen);
++
+     if (xwl_pixmap == NULL)
+        return NULL;
+ 
+@@ -912,6 +921,9 @@ xwl_glamor_dmabuf_export_sync_file(PixmapPtr pixmap)
+     if (!xwl_screen->glamor)
+         return -1;
+ 
++    if (xwl_glamor_ahb_is_active(xwl_screen))
++        return -1;
++
+ #ifdef DMA_BUF_IOCTL_EXPORT_SYNC_FILE
+     xwl_pixmap = xwl_pixmap_get(pixmap);
+     num_planes = gbm_bo_get_plane_count(xwl_pixmap->bo);
+@@ -965,6 +977,11 @@ xwl_glamor_dmabuf_import_sync_file(PixmapPtr pixmap, int sync_file)
+     if (!xwl_screen->glamor)
+         return;
+ 
++    if (xwl_glamor_ahb_is_active(xwl_screen)) {
++        close(sync_file);
++        return;
++    }
++
+ #ifdef DMA_BUF_IOCTL_IMPORT_SYNC_FILE
+     xwl_pixmap = xwl_pixmap_get(pixmap);
+     num_planes = gbm_bo_get_plane_count(xwl_pixmap->bo);
+@@ -1437,6 +1454,9 @@ xwl_glamor_gbm_release_fence_avail(int fd, int xevents, void *data)
+ Bool
+ xwl_glamor_supports_implicit_sync(struct xwl_screen *xwl_screen)
+ {
++    if (xwl_glamor_ahb_is_active(xwl_screen))
++        return FALSE;
++
+     /* absent glamor, implicit sync is irrelevant so just return TRUE */
+     return !xwl_screen->glamor ||
+         xwl_gbm_get(xwl_screen)->implicit_sync;
+@@ -1445,6 +1465,9 @@ xwl_glamor_supports_implicit_sync(struct xwl_screen *xwl_screen)
+ Bool
+ xwl_glamor_supports_syncobjs(struct xwl_screen *xwl_screen)
+ {
++    if (xwl_glamor_ahb_is_active(xwl_screen))
++        return FALSE;
++
+     return xwl_screen->glamor &&
+         xwl_gbm_get(xwl_screen)->supports_syncobjs;
+ }
+@@ -1452,6 +1475,9 @@ xwl_glamor_supports_syncobjs(struct xwl_screen *xwl_screen)
+ Bool
+ xwl_glamor_gbm_set_syncpts(struct xwl_window *xwl_window, PixmapPtr pixmap)
+ {
++    if (xwl_glamor_ahb_is_active(xwl_window->xwl_screen))
++        return FALSE;
++
+ #ifdef DRI3
+     struct xwl_screen *xwl_screen = xwl_window->xwl_screen;
+     struct xwl_pixmap *xwl_pixmap = xwl_pixmap_get(pixmap);
+@@ -1507,7 +1533,8 @@ xwl_glamor_gbm_dispose_syncpts(PixmapPtr pixmap)
+     struct xwl_pixmap *xwl_pixmap = xwl_pixmap_get(pixmap);
+     struct xwl_screen *xwl_screen = xwl_screen_get(pixmap->drawable.pScreen);
+ 
+-    if (!xwl_screen->glamor || !xwl_pixmap)
++    if (xwl_glamor_ahb_is_active(xwl_screen) ||
++        !xwl_screen->glamor || !xwl_pixmap)
+         return;
+ 
+     if (xwl_pixmap->syncobj) {
+@@ -1529,7 +1556,8 @@ xwl_glamor_gbm_wait_syncpts(PixmapPtr pixmap)
+     struct xwl_screen *xwl_screen = xwl_screen_get(pixmap->drawable.pScreen);
+     struct xwl_pixmap *xwl_pixmap = xwl_pixmap_get(pixmap);
+ 
+-    if (!xwl_screen->glamor || !xwl_pixmap)
++    if (xwl_glamor_ahb_is_active(xwl_screen) ||
++        !xwl_screen->glamor || !xwl_pixmap)
+         return;
+ 
+     if (xwl_pixmap->syncobj) {
+@@ -1550,7 +1578,8 @@ xwl_glamor_gbm_wait_release_fence(struct xwl_window *xwl_window,
+     struct xwl_pixmap *xwl_pixmap = xwl_pixmap_get(pixmap);
+     struct xwl_screen *xwl_screen = xwl_screen_get(pixmap->drawable.pScreen);
+ 
+-    if (!xwl_screen->glamor || !xwl_pixmap || !xwl_window_buffer)
++    if (xwl_glamor_ahb_is_active(xwl_screen) ||
++        !xwl_screen->glamor || !xwl_pixmap || !xwl_window_buffer)
+         return;
+ 
+     xwl_pixmap->xwl_window_buffer = xwl_window_buffer;
+@@ -1851,6 +1880,9 @@ error:
+ 
+ drmDevice *xwl_gbm_get_main_device(struct xwl_screen *xwl_screen)
+ {
++    if (xwl_glamor_ahb_is_active(xwl_screen))
++        return NULL;
++
+     struct xwl_gbm_private *xwl_gbm = xwl_gbm_get(xwl_screen);
+ 
+     return xwl_gbm->device;
+diff --git a/hw/xwayland/xwayland-glamor.c b/hw/xwayland/xwayland-glamor.c
+index 88ced5d..b64ff98 100644
+--- a/hw/xwayland/xwayland-glamor.c
++++ b/hw/xwayland/xwayland-glamor.c
+@@ -42,6 +42,7 @@
+ 
+ #include "xwayland-dmabuf.h"
+ #include "xwayland-glamor.h"
++#include "xwayland-glamor-ahb.h"
+ #include "xwayland-glamor-gbm.h"
+ #include "xwayland-present.h"
+ #include "xwayland-screen.h"
+@@ -79,11 +80,17 @@ glamor_egl_screen_init(ScreenPtr screen, struct glamor_context *glamor_ctx)
+     struct xwl_screen *xwl_screen = xwl_screen_get(screen);
+ 
+     glamor_set_glvnd_vendor(screen, xwl_screen->glvnd_vendor);
+-    glamor_enable_dri3(screen);
++    if (!xwl_glamor_ahb_is_active(xwl_screen))
++        glamor_enable_dri3(screen);
+     glamor_ctx->ctx = xwl_screen->egl_context;
+     glamor_ctx->display = xwl_screen->egl_display;
++    glamor_ctx->surface = xwl_glamor_ahb_is_active(xwl_screen)
++        ? xwl_glamor_ahb_surface(xwl_screen)
++        : EGL_NO_SURFACE;
+ 
+-    glamor_ctx->make_current = glamor_egl_make_current;
++    glamor_ctx->make_current = xwl_glamor_ahb_is_active(xwl_screen)
++        ? xwl_glamor_ahb_make_current
++        : glamor_egl_make_current;
+ 
+     xwl_screen->glamor_ctx = glamor_ctx;
+ }
+@@ -110,6 +117,8 @@ xwl_glamor_init_wl_registry(struct xwl_screen *xwl_screen,
+                             uint32_t id, const char *interface,
+                             uint32_t version)
+ {
++    xwl_glamor_ahb_init_wl_registry(xwl_screen, registry, id, interface,
++                                    version);
+     if (strcmp(interface, wl_drm_interface.name) == 0)
+         xwl_screen_set_drm_interface(xwl_screen, id, version);
+     else if (strcmp(interface, zwp_linux_dmabuf_v1_interface.name) == 0)
+@@ -121,6 +130,9 @@ xwl_glamor_init_wl_registry(struct xwl_screen *xwl_screen,
+ static Bool
+ xwl_glamor_has_wl_interfaces(struct xwl_screen *xwl_screen)
+ {
++    if (xwl_glamor_ahb_is_available(xwl_screen))
++        return TRUE;
++
+     if (!xwl_glamor_has_wl_drm(xwl_screen) &&
+         xwl_screen->dmabuf_protocol_version < 4) {
+         LogMessageVerb(X_INFO, 3, "glamor: 'wl_drm' not supported and linux-dmabuf v4 not supported\n");
+@@ -232,7 +244,9 @@ xwl_glamor_init(struct xwl_screen *xwl_screen)
+         return FALSE;
+     }
+ 
+-    if (!xwl_glamor_gbm_init_egl(xwl_screen)) {
++    if (!(xwl_glamor_ahb_is_available(xwl_screen)
++              ? xwl_glamor_ahb_init_egl(xwl_screen)
++              : xwl_glamor_gbm_init_egl(xwl_screen))) {
+         ErrorF("EGL setup failed, disabling glamor\n");
+         return FALSE;
+     }
+@@ -242,7 +256,9 @@ xwl_glamor_init(struct xwl_screen *xwl_screen)
+         return FALSE;
+     }
+ 
+-    if (!xwl_glamor_gbm_init_screen(xwl_screen)) {
++    if (!(xwl_glamor_ahb_is_active(xwl_screen)
++              ? xwl_glamor_ahb_init_screen(xwl_screen)
++              : xwl_glamor_gbm_init_screen(xwl_screen))) {
+         ErrorF("EGL backend init_screen() failed, disabling glamor\n");
+         return FALSE;
+     }
+diff --git a/hw/xwayland/xwayland-screen.c b/hw/xwayland/xwayland-screen.c
+index c83adda..9efd08b 100644
+--- a/hw/xwayland/xwayland-screen.c
++++ b/hw/xwayland/xwayland-screen.c
+@@ -58,6 +58,7 @@
+ #endif
+ #ifdef XWL_HAS_GLAMOR
+ #include "xwayland-glamor.h"
++#include "xwayland-glamor-ahb.h"
+ #endif
+ 
+ #ifdef MITSHM
+@@ -989,9 +990,17 @@ xwl_screen_init(ScreenPtr pScreen, int argc, char **argv)
+     }
+ 
+ #ifdef XWL_HAS_GLAMOR
+-    if (xwl_screen->glamor && !xwl_glamor_init_gbm(xwl_screen)) {
+-        ErrorF("xwayland glamor: failed to setup GBM backend, falling back to sw accel\n");
+-        xwl_screen->glamor = 0;
++    if (xwl_screen->glamor) {
++        Bool have_backend = FALSE;
++
++        if (xwl_glamor_ahb_init(xwl_screen))
++            have_backend = TRUE;
++        if (xwl_glamor_init_gbm(xwl_screen))
++            have_backend = TRUE;
++        if (!have_backend) {
++            ErrorF("xwayland glamor: failed to setup a rendering backend, falling back to sw accel\n");
++            xwl_screen->glamor = 0;
++        }
+     }
+ #endif
+ 

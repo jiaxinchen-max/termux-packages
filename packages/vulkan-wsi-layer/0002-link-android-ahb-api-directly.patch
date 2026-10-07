@@ -1,0 +1,38 @@
+From: Termux <termux@localhost>
+Subject: [PATCH] x11: retain libandroid for HardwareBuffer socket APIs
+
+The X11 swapchain discovered both AHardwareBuffer functions only with
+dlsym(RTLD_DEFAULT). LLD therefore dropped -landroid under --as-needed, so the
+lookup failed in a Bionic process. Use the NDK declarations directly.
+
+diff --git a/wsi/x11/swapchain.cpp b/wsi/x11/swapchain.cpp
+--- a/wsi/x11/swapchain.cpp
++++ b/wsi/x11/swapchain.cpp
+@@ -37,4 +37,3 @@
+ #include <ctime>
+ 
+-#include <dlfcn.h>
+ #include <fcntl.h>
+@@ -553,10 +552,8 @@ VkResult swapchain::bind_swapchain_image(VkDevice &device, const VkBindImageMemo
+ VkResult swapchain::init_platform(VkDevice device, const VkSwapchainCreateInfoKHR *swapchain_create_info,
+                                   bool &use_presentation_thread)
+ {
+-   HardwareBuffer_release =
+-      reinterpret_cast<pfnAHardwareBuffer_release>(dlsym(RTLD_DEFAULT, "AHardwareBuffer_release"));
+-   HardwareBuffer_sendHandleToUnixSocket = reinterpret_cast<pfnAHardwareBuffer_sendHandleToUnixSocket>(
+-      dlsym(RTLD_DEFAULT, "AHardwareBuffer_sendHandleToUnixSocket"));
++   HardwareBuffer_release = &AHardwareBuffer_release;
++   HardwareBuffer_sendHandleToUnixSocket = &AHardwareBuffer_sendHandleToUnixSocket;
+    m_device_data.instance_data.disp.GetPhysicalDeviceMemoryProperties2KHR(m_device_data.physical_device,
+                                                                           &m_memory_props);
+    if (m_surface == nullptr || HardwareBuffer_sendHandleToUnixSocket == nullptr || HardwareBuffer_release == nullptr)
+diff --git a/wsi/x11/swapchain.hpp b/wsi/x11/swapchain.hpp
+--- a/wsi/x11/swapchain.hpp
++++ b/wsi/x11/swapchain.hpp
+@@ -49,5 +49,5 @@ namespace x11
+ {
+ 
+ using pfnAHardwareBuffer_release = void (*)(AHardwareBuffer *);
+-using pfnAHardwareBuffer_sendHandleToUnixSocket = int (*)(AHardwareBuffer *, int);
++using pfnAHardwareBuffer_sendHandleToUnixSocket = int (*)(const AHardwareBuffer *, int);
+ 

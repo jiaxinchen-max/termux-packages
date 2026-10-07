@@ -5,8 +5,8 @@ TERMUX_PKG_MAINTAINER="@termux"
 # Keep version of `tigervnc` package aligned with this package, revbump tigervnc after modifying patches of this package
 TERMUX_PKG_VERSION="21.1.16"
 TERMUX_PKG_REVISION=3
-TERMUX_PKG_SRCURL=https://xorg.freedesktop.org/releases/individual/xserver/xorg-server-${TERMUX_PKG_VERSION}.tar.xz
-TERMUX_PKG_SHA256=b14a116d2d805debc5b5b2aac505a279e69b217dae2fae2dfcb62400471a9970
+TERMUX_PKG_SRCURL=http://127.0.0.1:8081/termux-packages/xserver.tar.gz
+TERMUX_PKG_SHA256=5c7dc766724f8a43373b28fd7c7fe6e7c535822b10df857f14dc1a0be3cbf2c2
 # We can not update it automatically because tigervnc server version must be aligned with xorg-server.
 TERMUX_PKG_AUTO_UPDATE=false
 TERMUX_PKG_DEPENDS="libandroid-shmem, libdrm, libpciaccess, libpixman, libx11, libxau, libxcvt, libxfont2, libxinerama, libxkbfile, libxshmfence, opengl, openssl, xkeyboard-config, xorg-protocol-txt, xorg-xkbcomp"

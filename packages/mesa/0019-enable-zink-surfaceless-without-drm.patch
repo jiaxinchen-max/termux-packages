@@ -1,0 +1,21 @@
+From: termux <termux@localhost>
+Subject: [PATCH] egl: allow surfaceless Zink when no DRM node is exposed
+
+On Android/Bionic, a Vulkan ICD can provide a hardware device without
+exposing /dev/dri.  The surfaceless EGL path currently retries without DRM
+only for forced software rendering, even when Zink was explicitly selected.
+Use its existing no-DRM device path for Zink too; it loads zink_dri and lets
+Zink create the Vulkan device through the selected ICD.
+
+diff --git a/src/egl/drivers/dri2/platform_surfaceless.c b/src/egl/drivers/dri2/platform_surfaceless.c
+index 86e5d092bce..b8c526de77a 100644
+--- a/src/egl/drivers/dri2/platform_surfaceless.c
++++ b/src/egl/drivers/dri2/platform_surfaceless.c
+@@ -377,7 +377,7 @@ dri2_initialize_surfaceless(_EGLDisplay *disp)
+    driver_loaded = surfaceless_probe_device(disp, disp->Options.ForceSoftware,
+                                             disp->Options.Zink);
+-   if (!driver_loaded && disp->Options.ForceSoftware) {
++   if (!driver_loaded && (disp->Options.ForceSoftware || disp->Options.Zink)) {
+       _eglLog(_EGL_DEBUG, "Falling back to surfaceless swrast without DRM.");
+       driver_loaded = surfaceless_probe_device_sw(disp);
+    }

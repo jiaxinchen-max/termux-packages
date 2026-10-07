@@ -3,10 +3,11 @@ TERMUX_PKG_DESCRIPTION="Wayland X11 server"
 TERMUX_PKG_LICENSE="MIT"
 TERMUX_PKG_MAINTAINER="@termux"
 TERMUX_PKG_VERSION="24.1.11"
+TERMUX_PKG_REVISION=1
 TERMUX_PKG_SRCURL=https://xorg.freedesktop.org/releases/individual/xserver/xwayland-${TERMUX_PKG_VERSION}.tar.xz
 TERMUX_PKG_SHA256=27115a1a8819078409bf6fecfeb7724e8137bd36426de7005a5b3aae0a2138ff
 TERMUX_PKG_AUTO_UPDATE=true
-TERMUX_PKG_DEPENDS="libandroid-shmem, libdrm, libepoxy, libpciaccess, libpixman, libwayland, libwayland-protocols, libx11, libxau, libxcvt, libxfont2, libxinerama, libxkbfile, libxshmfence, opengl, openssl, xkeyboard-config, xorg-protocol-txt, xorg-xkbcomp"
+TERMUX_PKG_DEPENDS="libandroid-shmem, libdrm, libepoxy (>= 1.5.10-6), libpciaccess, libpixman, libwayland, libwayland-protocols, libx11, libxau, libxcvt, libxfont2, libxinerama, libxkbfile, libxshmfence, opengl, openssl, xkeyboard-config, xorg-protocol-txt, xorg-xkbcomp"
 TERMUX_PKG_BUILD_DEPENDS="libwayland-cross-scanner"
 
 TERMUX_PKG_EXTRA_CONFIGURE_ARGS="
@@ -23,7 +24,7 @@ TERMUX_PKG_EXTRA_CONFIGURE_ARGS="
 -Dxcsecurity=true
 -Dxf86bigfont=true
 -Ddrm=true
--Dglamor=false
+-Dglamor=true
 -Dxvfb=false
 -Dlibunwind=false
 -Dipv6=true

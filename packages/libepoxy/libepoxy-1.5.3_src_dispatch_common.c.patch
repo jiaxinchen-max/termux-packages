@@ -1,15 +1,69 @@
 diff -uNr libepoxy-1.5.3/src/dispatch_common.c libepoxy-1.5.3.mod/src/dispatch_common.c
 --- libepoxy-1.5.3/src/dispatch_common.c	2018-10-05 02:40:48.000000000 +0300
 +++ libepoxy-1.5.3.mod/src/dispatch_common.c	2018-10-06 21:07:20.971157033 +0300
-@@ -178,11 +178,6 @@
+@@ -178,11 +178,31 @@
  #define OPENGL_LIB "/System/Library/Frameworks/OpenGL.framework/Versions/Current/OpenGL"
  #define GLES1_LIB "libGLESv1_CM.so"
  #define GLES2_LIB "libGLESv2.so"
--#elif defined(__ANDROID__)
+ #elif defined(__ANDROID__)
 -#define GLX_LIB "libGLESv2.so"
 -#define EGL_LIB "libEGL.so"
 -#define GLES1_LIB "libGLESv1_CM.so"
 -#define GLES2_LIB "libGLESv2.so"
++static bool
++epoxy_android_use_mesa(void)
++{
++    const char *value = getenv("TERMUX_ANDROID_ZINK");
++    return value && value[0] != '\0' && strcmp(value, "0") != 0;
++}
++
++#if defined(__LP64__)
++#define ANDROID_SYSTEM_EGL_LIB "/system/lib64/libEGL.so"
++#define ANDROID_SYSTEM_GLES1_LIB "/system/lib64/libGLESv1_CM.so"
++#define ANDROID_SYSTEM_GLES2_LIB "/system/lib64/libGLESv2.so"
++#else
++#define ANDROID_SYSTEM_EGL_LIB "/system/lib/libEGL.so"
++#define ANDROID_SYSTEM_GLES1_LIB "/system/lib/libGLESv1_CM.so"
++#define ANDROID_SYSTEM_GLES2_LIB "/system/lib/libGLESv2.so"
++#endif
++#define TERMUX_MESA_EGL_LIB "/data/data/com.termux/files/usr/lib/libEGL.so.1"
++#define TERMUX_MESA_OPENGL_LIB "/data/data/com.termux/files/usr/lib/libOpenGL.so.0"
++#define TERMUX_MESA_GLES1_LIB "/data/data/com.termux/files/usr/lib/libGLESv1_CM.so.1"
++#define TERMUX_MESA_GLES2_LIB "/data/data/com.termux/files/usr/lib/libGLESv2.so.2"
++#define GLX_LIB (epoxy_android_use_mesa() ? TERMUX_MESA_OPENGL_LIB : ANDROID_SYSTEM_GLES2_LIB)
++#define EGL_LIB (epoxy_android_use_mesa() ? TERMUX_MESA_EGL_LIB : ANDROID_SYSTEM_EGL_LIB)
++#define GLES1_LIB (epoxy_android_use_mesa() ? TERMUX_MESA_GLES1_LIB : ANDROID_SYSTEM_GLES1_LIB)
++#define GLES2_LIB (epoxy_android_use_mesa() ? TERMUX_MESA_GLES2_LIB : ANDROID_SYSTEM_GLES2_LIB)
  #elif defined(_WIN32)
  #define EGL_LIB "libEGL.dll"
  #define GLES1_LIB "libGLES_CM.dll"
+@@ -575,6 +582,12 @@
+ static bool
+ epoxy_current_context_is_glx(void)
+ {
++#ifdef __ANDROID__
++    /* Android exposes OpenGL ES exclusively through EGL. GLX_LIB points at
++     * libGLESv2, so probing the generated GLX thunk aborts on the missing
++     * glXGetCurrentContext symbol. */
++    return false;
++#else
+ #if !PLATFORM_HAS_GLX
+     return false;
+ #else
+@@ -600,6 +613,7 @@
+
+     return false;
+ #endif /* PLATFORM_HAS_GLX */
++#endif /* __ANDROID__ */
+ }
+ 
+ /**
+@@ -809,7 +823,7 @@
+     /* If we already have a library that links to libglapi loaded,
+      * use that.
+      */
+-#if PLATFORM_HAS_GLX
++#if PLATFORM_HAS_GLX && !defined(__ANDROID__)
+     if (api.glx_handle && glXGetCurrentContext())
+         return epoxy_gl_dlsym(name);
+ #endif

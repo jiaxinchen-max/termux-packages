@@ -1,0 +1,43 @@
+From: termux <termux@localhost>
+Subject: [PATCH] egl/android: initialize Zink without a DRM node
+
+Android Vulkan implementations can expose a usable GPU through the platform
+loader while intentionally exposing no /dev/dri node. TERMUX_ANDROID_ZINK is
+an opt-in Termux backend: it uses the existing Android image loader with no
+DRM fd, preserving AHardwareBuffer interop and avoiding the surfaceless
+swrast loader.
+
+diff --git a/src/egl/drivers/dri2/platform_android.c b/src/egl/drivers/dri2/platform_android.c
+--- a/src/egl/drivers/dri2/platform_android.c
++++ b/src/egl/drivers/dri2/platform_android.c
+@@ -1182,5 +1182,20 @@ dri2_initialize_android(_EGLDisplay *disp)
+    if (!force_pure_swrast)
+       device_opened = droid_open_device(disp, disp->Options.ForceSoftware);
+ 
++   if (!device_opened && disp->Options.Zink &&
++       getenv("TERMUX_ANDROID_ZINK")) {
++      /* The Termux Vulkan backend has no DRM render node. */
++      dri2_dpy->fd_render_gpu = -1;
++      if (!droid_load_driver(disp, false)) {
++         err = "DRI2: failed to load Zink driver";
++         goto cleanup;
++      }
++      if (!dri2_create_screen(disp)) {
++         err = "DRI2: failed to create Zink screen";
++         goto cleanup;
++      }
++      device_opened = EGL_TRUE;
++   }
++
+    if ((!device_opened && disp->Options.ForceSoftware) ||
+        force_pure_swrast) {
+@@ -1205,7 +1217,8 @@ dri2_initialize_android(_EGLDisplay *disp)
+ 
+    dri2_dpy->fd_display_gpu = dri2_dpy->fd_render_gpu;
+ 
+-   if (!dri2_dpy->pure_swrast && !dri2_setup_device(disp, false)) {
++   if (!dri2_dpy->pure_swrast && dri2_dpy->fd_render_gpu >= 0 &&
++       !dri2_setup_device(disp, false)) {
+       err = "DRI2: failed to setup EGLDevice";
+       goto cleanup;
+    }

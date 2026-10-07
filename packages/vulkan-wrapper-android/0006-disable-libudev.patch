@@ -1,0 +1,21 @@
+From: termux <termux@localhost>
+Subject: [PATCH 6/6] meson: disable optional libudev for Bionic builds
+
+The wrapper enables Mesa's Linux WSI on Bionic, but Termux does not ship
+libudev.  The Vulkan WSI code has no udev requirement when HAVE_LIBUDEV is
+unset, so do not let Meson turn an optional build-time discovery into a
+runtime dependency.
+
+diff --git a/meson.build b/meson.build
+index c546461ec9c..7a993aa2f22 100644
+--- a/meson.build
++++ b/meson.build
+@@ -1690,7 +1690,7 @@ if dep_libdrm.found()
+   endif
+ endif
+ 
+-dep_libudev = dependency('libudev', required : false)
++dep_libudev = null_dep
+ if dep_libudev.found()
+   pre_args += '-DHAVE_LIBUDEV'
+ endif
