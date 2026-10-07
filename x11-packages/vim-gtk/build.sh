@@ -2,17 +2,17 @@ TERMUX_PKG_HOMEPAGE=https://www.vim.org
 TERMUX_PKG_DESCRIPTION="Vi IMproved - enhanced vi editor"
 TERMUX_PKG_LICENSE="VIM License"
 TERMUX_PKG_MAINTAINER="Joshua Kahn <tom@termux.dev>"
-TERMUX_PKG_BUILD_DEPENDS="luajit, perl, python, ruby, tcl"
 TERMUX_PKG_DEPENDS="gdk-pixbuf, glib, gtk3, libcairo, libcanberra, libice, libiconv, libsm, libsodium, libx11, libxt, ncurses, pango"
+TERMUX_PKG_BUILD_DEPENDS="luajit, perl, python, ruby, tcl"
 TERMUX_PKG_SUGGESTS="luajit, perl, python, ruby, tcl"
 TERMUX_PKG_RECOMMENDS="diffutils, xxd"
 TERMUX_PKG_CONFLICTS="vim"
 TERMUX_PKG_BREAKS="vim-python"
 TERMUX_PKG_REPLACES="vim-python"
 TERMUX_PKG_PROVIDES="vim-python"
-TERMUX_PKG_VERSION="9.2.0450"
+TERMUX_PKG_VERSION="9.2.1150"
 TERMUX_PKG_SRCURL="https://github.com/vim/vim/archive/refs/tags/v${TERMUX_PKG_VERSION}.tar.gz"
-TERMUX_PKG_SHA256=6811815aaa2c40d72837f62dce17d1cbc69def741863ae485d52396695453ad6
+TERMUX_PKG_SHA256=07a1e2d0e4a5c07cd2ee5d484306f53ded69407fa4beb886d71bd93674692c08
 TERMUX_PKG_BUILD_IN_SRC=true
 TERMUX_PKG_CONFFILES="share/vim/vimrc"
 TERMUX_PKG_EXTRA_CONFIGURE_ARGS="
@@ -120,7 +120,7 @@ termux_step_post_make_install() {
 	# Avoid overlap with the `xxd` subpackage of `vim` by removing it from vim-gtk
 	export TERMUX_PKG_RM_AFTER_INSTALL="
 	bin/xxd
-	share/man/man1/xxd.1
+	share/man/man1/xxd.1.gz
 	share/vim/vim${_VIM_VERSION}/spell/en.ascii*
 	share/vim/vim${_VIM_VERSION}/print
 	share/vim/vim${_VIM_VERSION}/tools

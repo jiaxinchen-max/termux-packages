@@ -3,16 +3,17 @@ TERMUX_PKG_DESCRIPTION="A fast, compliant alternative implementation of Python"
 TERMUX_PKG_LICENSE="MIT"
 TERMUX_PKG_MAINTAINER="@licy183"
 _MAJOR_VERSION=2.7
-TERMUX_PKG_VERSION="7.3.22"
+TERMUX_PKG_VERSION="8.0.0"
+TERMUX_PKG_REVISION=1
 TERMUX_PKG_SRCURL=(
-	https://downloads.python.org/pypy/pypy$_MAJOR_VERSION-v$TERMUX_PKG_VERSION-src.tar.bz2
-	https://downloads.python.org/pypy/pypy2.7-v$TERMUX_PKG_VERSION-linux64.tar.bz2
-	https://downloads.python.org/pypy/pypy2.7-v$TERMUX_PKG_VERSION-linux32.tar.bz2
+	"https://downloads.python.org/pypy/pypy$_MAJOR_VERSION-v$TERMUX_PKG_VERSION-src.tar.gz"
+	"https://downloads.python.org/pypy/pypy2.7-v$TERMUX_PKG_VERSION-linux64.tar.gz"
+	"https://downloads.python.org/pypy/pypy2.7-v$TERMUX_PKG_VERSION-linux32.tar.gz"
 )
 TERMUX_PKG_SHA256=(
-	f4445c1a835effe4d3b26521e73a7780893dec02520aa6799a377c9a0fcdd8ad
-	c47a4030542cbd34d0cb673a0de1956c94c1ebe6c6b094f2ae6a167c55375f68
-	3512d44a9005b52611ad2d84e63c575c8b592fb1dd1a708a00f787b46e6ee07b
+	e2a56b587014a97a7e6bd14ae99b55247cf2939d67a05a09e62af0afc16125cb
+	714e8c41608d0d66588c3ba48fb788dc33a1e8a865168d165585d1660beade0d
+	74d09cafbe0c85ae4c4d17d54099c6b31354235ffdd5277c01601434cc23e459
 )
 TERMUX_PKG_AUTO_UPDATE=true
 TERMUX_PKG_DEPENDS="gdbm, libandroid-posix-semaphore, libandroid-support, libbz2, libcrypt, libexpat, libffi, liblzma, libsqlite, ncurses, ncurses-ui-libs, openssl, zlib"

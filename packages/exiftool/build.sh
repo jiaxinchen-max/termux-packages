@@ -2,10 +2,12 @@ TERMUX_PKG_HOMEPAGE=https://exiftool.org/
 TERMUX_PKG_DESCRIPTION="Utility for reading, writing and editing meta information in a wide variety of files."
 TERMUX_PKG_LICENSE="Artistic-License-2.0"
 TERMUX_PKG_MAINTAINER="@termux"
-TERMUX_PKG_VERSION="13.58"
-TERMUX_PKG_SRCURL="https://exiftool.org/Image-ExifTool-$TERMUX_PKG_VERSION.tar.gz"
-TERMUX_PKG_SHA256=c84fb6b613a480a638225d44979bf44cd2f91c92b79f4d2aa43773c89fa4199e
+TERMUX_PKG_VERSION="13.59"
+TERMUX_PKG_REVISION=1
+TERMUX_PKG_SRCURL="https://github.com/exiftool/exiftool/archive/refs/tags/${TERMUX_PKG_VERSION}.tar.gz"
+TERMUX_PKG_SHA256=87d3317882fdae9cb4dcfe57a96a378d0132ffc02c731315bf128b19ddcf7aac
 TERMUX_PKG_AUTO_UPDATE=true
+TERMUX_PKG_UPDATE_TAG_TYPE="newest-tag"
 TERMUX_PKG_DEPENDS="perl"
 TERMUX_PKG_PLATFORM_INDEPENDENT=true
 

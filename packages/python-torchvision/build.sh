@@ -2,9 +2,10 @@ TERMUX_PKG_HOMEPAGE=https://github.com/pytorch/vision
 TERMUX_PKG_DESCRIPTION="Datasets, Transforms and Models specific to Computer Vision"
 TERMUX_PKG_LICENSE="BSD 3-Clause"
 TERMUX_PKG_MAINTAINER="@termux"
-TERMUX_PKG_VERSION="0.26.0"
+TERMUX_PKG_VERSION="0.29.1"
+TERMUX_PKG_REVISION=1
 TERMUX_PKG_SRCURL="https://github.com/pytorch/vision/archive/refs/tags/v${TERMUX_PKG_VERSION}.tar.gz"
-TERMUX_PKG_SHA256=fb95b6b78b3801c4d4d6332f7a5a0b6c624588e1b39e0d6fa145227b0c749403
+TERMUX_PKG_SHA256=0a14655bd32095148d93fa595f93aba45dda0d13b25cc7fe86a041340e4a4862
 TERMUX_PKG_DEPENDS="libc++, ffmpeg, python, python-numpy, python-pillow, python-pip, python-torch, libjpeg-turbo, libpng, libwebp, zlib"
 TERMUX_PKG_SETUP_PYTHON=true
 TERMUX_PKG_AUTO_UPDATE=true
@@ -19,7 +20,7 @@ termux_step_pre_configure() {
 	# libwebp to be detected and libjpeg to be detected,
 	# and assists with detecting ffmpeg
 	export BUILD_PREFIX="$TERMUX_PREFIX"
-	export BUILD_VERSION=$TERMUX_PKG_VERSION
+	export BUILD_VERSION="$TERMUX_PKG_VERSION"
 
 	# this causes ffmpeg to be detected during cross-compilation,
 	# enabling the "video decoder extensions"

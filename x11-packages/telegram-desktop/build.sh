@@ -4,11 +4,11 @@ TERMUX_PKG_DESCRIPTION="Telegram Desktop Client"
 TERMUX_PKG_LICENSE="custom"
 TERMUX_PKG_LICENSE_FILE="LICENSE, LEGAL"
 TERMUX_PKG_MAINTAINER="@termux"
-TERMUX_PKG_VERSION="6.8.2"
+TERMUX_PKG_VERSION="7.2.9"
 TERMUX_PKG_SRCURL="https://github.com/telegramdesktop/tdesktop/releases/download/v$TERMUX_PKG_VERSION/tdesktop-$TERMUX_PKG_VERSION-full.tar.gz"
-TERMUX_PKG_SHA256=cce1c196ef00703e9872d7072defd14860c970effc52d52d990745c8dca16cac
-TERMUX_PKG_DEPENDS="abseil-cpp, boost, ffmpeg, glib, hicolor-icon-theme, hunspell, kf6-kcoreaddons, libandroid-shmem, libc++, libdispatch, libdrm, libjxl, liblz4, libminizip, protobuf, librnnoise, libsigc++-3.0, libx11, libxcomposite, libxdamage, libxrandr, libxtst, openal-soft, opengl, openh264, openssl, pipewire, pulseaudio, qt6-qtbase, qt6-qtimageformats, qt6-qtsvg, xxhash, zlib"
-TERMUX_PKG_BUILD_DEPENDS="ada, aosp-libs, boost-headers, glib-cross, qt6-qtbase-cross-tools"
+TERMUX_PKG_SHA256=dcf2e25c4e8aa961c2439312164d42408afa0130e89f31e77b55409a80da942a
+TERMUX_PKG_DEPENDS="abseil-cpp, boost, ffmpeg, glib, hicolor-icon-theme, hunspell, kf6-kcoreaddons, libandroid-shmem, libc++, libdispatch, libdrm, libjxl, liblz4, libminizip, protobuf, librnnoise, libsigc++-3.0, libx11, libxcomposite, libxdamage, libxrandr, libxtst, openal-soft, opengl, openh264, openssl, pipewire, pulseaudio, qt6-qtbase, qt6-qtimageformats, qt6-qtshadertools, qt6-qtsvg, qt6-qtwayland, xxhash, zlib"
+TERMUX_PKG_BUILD_DEPENDS="ada, aosp-libs, boost-headers, glib-cross, qt6-qtbase-cross-tools, qt6-qtshadertools-cross-tools"
 TERMUX_PKG_VERSIONED_GIR=false
 TERMUX_PKG_AUTO_UPDATE=true
 
@@ -22,9 +22,22 @@ TERMUX_PKG_EXTRA_CONFIGURE_ARGS="
 -DCMAKE_VERBOSE_MAKEFILE=ON
 -DDESKTOP_APP_DISABLE_JEMALLOC=ON
 -DDESKTOP_APP_DISABLE_AUTOUPDATE=ON
+-DDESKTOP_APP_DISABLE_FIDO2=ON
 -DTDESKTOP_API_ID=611335
 -DTDESKTOP_API_HASH=d524b414d21f4d37f08684c1df41ac9c
+-DCRL_FORCE_QT=ON
 "
+
+__tlottie_fetch_source() {
+	local _archive="$TERMUX_PKG_CACHEDIR/tlottie-0.1.0.tar.gz"
+	termux_download \
+		"https://github.com/dkaraush/tlottie/archive/31f1b542f88e7b4be9a01e749920d857535fc715.tar.gz" \
+		"$_archive" \
+		"971f7acb6d6ba3001e4487f3b32d1a6a375b75eb4ffc9ead3c0a18d2389752b9"
+	rm -rf "$TERMUX_PKG_SRCDIR/tlottie"
+	mkdir -p "$TERMUX_PKG_SRCDIR/tlottie"
+	tar -xf "$_archive" --strip-components=1 -C "$TERMUX_PKG_SRCDIR/tlottie"
+}
 
 __tg_owt_fetch_source() {
 	local _commit=$(TERMUX_PKG_SRCDIR=$TERMUX_PKG_SRCDIR bash $TERMUX_PKG_BUILDER_DIR/get_tg_owt_commit.sh)
@@ -71,6 +84,7 @@ __libtd_fetch_source() {
 }
 
 termux_step_post_get_source() {
+	__tlottie_fetch_source
 	__tg_owt_fetch_source
 	__libtd_fetch_source
 }
@@ -126,6 +140,25 @@ termux_step_host_build() {
 	__cppgir_build
 }
 
+__tlottie_build() {
+	termux_setup_rust
+
+	local _tlottie_build_dir="$TERMUX_PKG_BUILDDIR/tlottie"
+	pushd "$TERMUX_PKG_SRCDIR/tlottie"
+	CARGO_TARGET_DIR="$_tlottie_build_dir" cargo rustc \
+		--jobs "$TERMUX_PKG_MAKE_PROCESSES" \
+		--locked \
+		--target "$CARGO_TARGET_NAME" \
+		--release \
+		--features c-api \
+		--lib \
+		--crate-type staticlib
+	popd
+
+	TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -DDESKTOP_APP_TLOTTIE_LIBRARY=$_tlottie_build_dir/$CARGO_TARGET_NAME/release/libtlottie.a"
+	TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -DDESKTOP_APP_TLOTTIE_INCLUDE_DIR=$TERMUX_PKG_SRCDIR/tlottie/include"
+}
+
 __tg_owt_build() {
 	termux_setup_cmake
 	termux_setup_ninja
@@ -150,6 +183,7 @@ __tg_owt_build() {
 -DBUILD_SHARED_LIBS=OFF
 -DBUILD_STATIC_LIBS=ON
 -DTG_OWT_USE_PIPEWIRE=OFF
+-DTG_OWT_BUILD_AUDIO_BACKENDS=OFF
 "
 
 	# Configure
@@ -228,6 +262,7 @@ __libtd_build() {
 }
 
 termux_step_configure() {
+	__tlottie_build
 	__tg_owt_build
 	__libtd_build
 
@@ -243,6 +278,7 @@ termux_step_configure() {
 
 		CPPFLAGS+=" -DG_VA_COPY_AS_ARRAY=0"
 		TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -DPROTOBUF_PROTOC_EXECUTABLE=$(command -v protoc)"
+		TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -DQSB_EXECUTABLE=$TERMUX_PREFIX/opt/qt6/cross/lib/qt6/bin/qsb"
 
 		mkdir -p "$TERMUX_PKG_TMPDIR/bin"
 		local _type

@@ -7,15 +7,15 @@ export TMPDIR
 # Set the build-package.sh call depth
 # If its the root call, then create a file to store the list of packages and their dependencies
 # that have been compiled at any instant by recursive calls to build-package.sh
-if (( ${TERMUX_BUILD_PACKAGE_CALL_DEPTH-0} )); then
-	export TERMUX_BUILD_PACKAGE_CALL_DEPTH=$((TERMUX_BUILD_PACKAGE_CALL_DEPTH+1))
-else
+if [[ ! "$TERMUX_BUILD_PACKAGE_CALL_DEPTH" =~ ^[0-9]+$ ]]; then
 	TERMUX_BUILD_PACKAGE_CALL_DEPTH=0
 	TERMUX_BUILD_PACKAGE_CALL_BUILT_PACKAGES_LIST_FILE_PATH="${TMPDIR}/build-package-call-built-packages-list-$(date +"%Y-%m-%d-%H.%M.%S.")$((RANDOM%1000))"
 	TERMUX_BUILD_PACKAGE_CALL_BUILDING_PACKAGES_LIST_FILE_PATH="${TMPDIR}/build-package-call-building-packages-list-$(date +"%Y-%m-%d-%H.%M.%S.")$((RANDOM%1000))"
 	export TERMUX_BUILD_PACKAGE_CALL_DEPTH TERMUX_BUILD_PACKAGE_CALL_BUILT_PACKAGES_LIST_FILE_PATH TERMUX_BUILD_PACKAGE_CALL_BUILDING_PACKAGES_LIST_FILE_PATH
 	echo -n " " > "$TERMUX_BUILD_PACKAGE_CALL_BUILT_PACKAGES_LIST_FILE_PATH"
 	touch "$TERMUX_BUILD_PACKAGE_CALL_BUILDING_PACKAGES_LIST_FILE_PATH"
+else
+	export TERMUX_BUILD_PACKAGE_CALL_DEPTH=$((TERMUX_BUILD_PACKAGE_CALL_DEPTH+1))
 fi
 
 set -euo pipefail
@@ -124,11 +124,6 @@ source "$TERMUX_SCRIPTDIR/scripts/build/setup/termux_setup_ghc_iserv.sh"
 # shellcheck source=scripts/build/setup/termux_setup_cabal.sh
 source "$TERMUX_SCRIPTDIR/scripts/build/setup/termux_setup_cabal.sh"
 
-# Utility function to setup jailbreak-cabal. It is used to remove version constraints
-# from Cabal packages.
-# shellcheck source=scripts/build/setup/termux_setup_jailbreak_cabal.sh
-source "$TERMUX_SCRIPTDIR/scripts/build/setup/termux_setup_jailbreak_cabal.sh"
-
 # Utility function for setting up GObject Introspection cross environment.
 # shellcheck source=scripts/build/setup/termux_setup_gir.sh
 source "$TERMUX_SCRIPTDIR/scripts/build/setup/termux_setup_gir.sh"
@@ -144,6 +139,10 @@ source "$TERMUX_SCRIPTDIR/scripts/build/setup/termux_setup_golang.sh"
 # Utility function for setting up LDC cross environment.
 # shellcheck source=scripts/build/setup/termux_setup_ldc.sh
 source "$TERMUX_SCRIPTDIR/scripts/build/setup/termux_setup_ldc.sh"
+
+# Utility function for nim-using packages to setup a nim toolchain.
+# shellcheck source=scripts/build/setup/termux_setup_nim.sh
+source "$TERMUX_SCRIPTDIR/scripts/build/setup/termux_setup_nim.sh"
 
 # Utility function for setting up no-integrated (GNU Binutils) as.
 # shellcheck source=scripts/build/setup/termux_setup_no_integrated_as.sh
@@ -180,6 +179,10 @@ source "$TERMUX_SCRIPTDIR/scripts/build/setup/termux_setup_ninja.sh"
 # Utility function to setup Node.js JavaScript Runtime
 # shellcheck source=scripts/build/setup/termux_setup_nodejs.sh
 source "$TERMUX_SCRIPTDIR/scripts/build/setup/termux_setup_nodejs.sh"
+
+# Utility function to setup Bun JavaScript runtime/package manager
+# shellcheck source=scripts/build/setup/termux_setup_bun.sh
+source "$TERMUX_SCRIPTDIR/scripts/build/setup/termux_setup_bun.sh"
 
 # Utility function to setup a current meson build system.
 # shellcheck source=scripts/build/setup/termux_setup_meson.sh
@@ -281,8 +284,8 @@ source "$TERMUX_SCRIPTDIR/scripts/build/termux_step_handle_host_build.sh"
 source "$TERMUX_SCRIPTDIR/scripts/build/termux_step_host_build.sh"
 
 # Setup a standalone Android NDK toolchain. Called from termux_step_setup_toolchain.
-# shellcheck source=scripts/build/toolchain/termux_setup_toolchain_29.sh
-source "$TERMUX_SCRIPTDIR/scripts/build/toolchain/termux_setup_toolchain_29.sh"
+# shellcheck source=scripts/build/toolchain/termux_setup_toolchain_30.sh
+source "$TERMUX_SCRIPTDIR/scripts/build/toolchain/termux_setup_toolchain_30.sh"
 
 # Setup a standalone Android NDK 23c toolchain. Called from termux_step_setup_toolchain.
 # shellcheck source=scripts/build/toolchain/termux_setup_toolchain_23c.sh
@@ -420,8 +423,8 @@ source "$TERMUX_SCRIPTDIR/scripts/build/termux_step_create_pacman_package.sh"
 
 # Process 'update-alternatives' entries from `.alternatives` files.
 # Not to be overridden by package scripts.
-# shellcheck source=scripts/build/termux_step_update_alternatives.sh
-source "$TERMUX_SCRIPTDIR/scripts/build/termux_step_update_alternatives.sh"
+# shellcheck source=scripts/build/termux_step_create_alternatives.sh
+source "$TERMUX_SCRIPTDIR/scripts/build/termux_step_create_alternatives.sh"
 
 # Finish the build. Not to be overridden by package scripts.
 # shellcheck source=scripts/build/termux_step_finish_build.sh
@@ -515,15 +518,17 @@ _show_usage() {
 	echo "Build a package by creating a .deb file in the output/ folder."
 	echo
 	echo "Available options:"
-	[[ "$TERMUX_ON_DEVICE_BUILD" = "false" ]] && echo "  -a The architecture to build for: aarch64(default), arm, i686, x86_64 or all."
+	[[ "$TERMUX_ON_DEVICE_BUILD" == "false" ]] && echo "  -a The architecture to build for: aarch64(default), arm, i686, x86_64 or all."
 	echo "  -c Continue previous build."
 	echo "  -C Cleanup already built packages on low disk space."
 	echo "  -d Build with debug symbols."
 	echo "  -D Build a disabled package in disabled-packages/."
 	echo "  -f Force build even if package has already been built."
 	echo "  -F Force build even if package and its dependencies have already been built."
-	[[ "$TERMUX_ON_DEVICE_BUILD" = "false" ]] && echo "  -i Download and extract dependencies instead of building them."
+	[[ "$TERMUX_ON_DEVICE_BUILD" == "false" ]] && echo "  -i Download and extract dependencies instead of building them."
 	echo "  -I Download and extract dependencies instead of building them, keep existing $TERMUX_BASE_DIR files."
+	echo "  -j <N> Number of threads. (default or 0, N = \`nproc\` = $(nproc))"
+	echo "         Can also be passed combined, e.g. '-j12'."
 	echo "  -L The package and its dependencies will be based on the same library."
 	echo "  -q Quiet build."
 	echo "  -Q Loud build -- set -x debug output and function tracing."
@@ -536,6 +541,7 @@ _show_usage() {
 	echo "  -o Specify directory where to put built packages. Default: output/"
 	echo "  --format Specify package output format (debian, pacman)."
 	echo "  --library Specify library of package (bionic, glibc)."
+	echo "  --reuse-built-packages Reuse built packages when unavailable from repositories."
 	exit 1
 }
 
@@ -560,6 +566,7 @@ while (( $# )); do
 			shift 1
 			export TERMUX_PACKAGE_LIBRARY="$1"
 		;;
+		--reuse-built-packages) export TERMUX_PKGS__BUILD__REUSE_BUILT_PACKAGES=true;;
 		-a)
 			if [[ "$TERMUX_ON_DEVICE_BUILD" == "true" ]]; then
 				termux_error_exit "./build-package.sh: option '-a' is not available for on-device builds"
@@ -583,6 +590,21 @@ while (( $# )); do
 		-I)
 			export TERMUX_INSTALL_DEPS=true
 			export TERMUX_PKGS__BUILD__RM_ALL_PKGS_BUILT_MARKER_AND_INSTALL_FILES=false
+		;;
+		-j|-j[0-9]*)
+			# If we got the 2 arg form discard the "-j".
+			[[ "$1" == "-j" && "${2:-}" == [0-9]* ]] && shift 1
+			# Check that -j's argument exists and is numeric.
+			[[ -n "${1/-j}" && "${1/-j}" =~ ^[0-9]+$ ]] || termux_error_exit "./build-package.sh: option '-j' only takes integers"
+
+			# Assign the requested number of threads.
+			# If the result is 0 or negative then default to `nproc`
+			TERMUX_PKG_MAKE_PROCESSES="${1/-j}"
+			if (( TERMUX_PKG_MAKE_PROCESSES < 1 )); then
+				TERMUX_PKG_MAKE_PROCESSES="$(nproc)"
+			fi
+
+			export TERMUX_PKG_MAKE_PROCESSES
 		;;
 		-L) export TERMUX_GLOBAL_LIBRARY=true;;
 		-q) export TERMUX_QUIET_BUILD=true;;
@@ -632,7 +654,7 @@ if [[ -n "${TERMUX_PACKAGE_LIBRARY-}" ]]; then
 	esac
 fi
 
-if [[ "${TERMUX_INSTALL_DEPS-false}" = "true" || "${TERMUX_PACKAGE_LIBRARY-bionic}" = "glibc" ]]; then
+if [[ "${TERMUX_INSTALL_DEPS-false}" == "true" || "${TERMUX_PACKAGE_LIBRARY-bionic}" == "glibc" ]]; then
 	# Setup PGP keys for verifying integrity of dependencies.
 	# Keys are obtained from our keyring package.
 	gpg --list-keys 2C7F29AE97891F6419A9E2CDB0076E490B71616B > /dev/null 2>&1 || {
@@ -673,6 +695,7 @@ for (( i=0; i < ${#PACKAGE_LIST[@]}; i++ )); do
 			[[ "${TERMUX_INSTALL_DEPS:-}" == "true" && "${TERMUX_PKGS__BUILD__RM_ALL_PKGS_BUILT_MARKER_AND_INSTALL_FILES:-}" == "false" ]] && _SELF_ARGS+=("-I")
 			[[ "${TERMUX_GLOBAL_LIBRARY:-}" == "true" ]] && _SELF_ARGS+=("-L")
 			[[ -n "${TERMUX_OUTPUT_DIR:-}" ]] && _SELF_ARGS+=("-o" "$TERMUX_OUTPUT_DIR")
+			[[ "${TERMUX_PKGS__BUILD__REUSE_BUILT_PACKAGES:-}" == "true" ]] && _SELF_ARGS+=("--reuse-built-packages")
 			[[ "${TERMUX_PKGS__BUILD__RM_ALL_PKG_BUILD_DEPENDENT_DIRS:-}" == "true" ]] && _SELF_ARGS+=("-r")
 			[[ "${TERMUX_WITHOUT_DEPVERSION_BINDING:-}" == "true" ]] && _SELF_ARGS+=("-w")
 			[[ -n "${TERMUX_PACKAGE_FORMAT:-}" ]] && _SELF_ARGS+=("--format" "$TERMUX_PACKAGE_FORMAT")
@@ -694,8 +717,7 @@ for (( i=0; i < ${#PACKAGE_LIST[@]}; i++ )); do
 			TERMUX_PKG_BUILDER_DIR="$(realpath "${PACKAGE_LIST[i]}")"
 		else
 			# Package name:
-			# FIXME: TERMUX_PACKAGES_DIRECTORIES should be made into an array.
-			for package_directory in $TERMUX_PACKAGES_DIRECTORIES; do
+			for package_directory in "${TERMUX_PACKAGES_DIRECTORIES[@]}"; do
 				if [[ -d "${TERMUX_SCRIPTDIR}/${package_directory}/${TERMUX_PKG_NAME}" ]]; then
 					export TERMUX_PKG_BUILDER_DIR="${TERMUX_SCRIPTDIR}/$package_directory/$TERMUX_PKG_NAME"
 					break
@@ -776,7 +798,7 @@ for (( i=0; i < ${#PACKAGE_LIST[@]}; i++ )); do
 		cd "$TERMUX_PKG_MASSAGEDIR/$TERMUX_PREFIX_CLASSICAL"
 		termux_step_post_massage
 		# At the final stage (when the package is archiving) it is better to use commands from the system
-		if [[ "$TERMUX_ON_DEVICE_BUILD" = "false" ]]; then
+		if [[ "$TERMUX_ON_DEVICE_BUILD" == "false" ]]; then
 			export PATH="/usr/bin:$PATH"
 		fi
 		cd "$TERMUX_PKG_MASSAGEDIR"

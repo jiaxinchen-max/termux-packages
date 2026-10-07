@@ -12,8 +12,10 @@ dart
 deno
 dotnet8.0
 dotnet9.0
+dotnet10.0
 electron-for-code-oss
 electron-host-tools-for-code-oss
+electron42-host-tools
 emscripten
 firefox
 flang
@@ -22,6 +24,7 @@ gitea
 grafana
 hangover-wine
 libllvm
+libreoffice
 octave-x
 plasma-workspace
 python-llvmlite

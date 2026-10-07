@@ -11,7 +11,7 @@ termux_download_ubuntu_packages() {
 			echo "DESTINATION    [\$TERMUX_PKG_HOSTBUILD_DIR/ubuntu_packages]"
 			echo "ARCHITECTURE   [amd64]"
 			echo "MIRROR_URL     [https://archive.ubuntu.com/ubuntu]"
-			echo "UBUNTU_RELEASE [noble] # latest Ubuntu LTS"
+			echo "UBUNTU_RELEASE [resolute] # latest Ubuntu LTS"
 			return 1
 		}
 
@@ -21,12 +21,10 @@ termux_download_ubuntu_packages() {
 		fi
 	} 1>&2
 
-	local DESTINATION ARCHITECTURE MIRROR_URL UBUNTU_RELEASE
-
-	: "${DESTINATION:="$TERMUX_PKG_HOSTBUILD_DIR/ubuntu_packages"}"
-	: "${ARCHITECTURE:=amd64}"
-	: "${MIRROR_URL:="https://archive.ubuntu.com/ubuntu"}"
-	: "${UBUNTU_RELEASE:=noble}" # Default to latest Ubuntu LTS, currently 24.04 Noble Numbat
+	local DESTINATION="${DESTINATION:-$TERMUX_PKG_HOSTBUILD_DIR/ubuntu_packages}"
+	local ARCHITECTURE="${ARCHITECTURE:-amd64}"
+	local MIRROR_URL="${MIRROR_URL:-https://archive.ubuntu.com/ubuntu}"
+	local UBUNTU_RELEASE="${UBUNTU_RELEASE:-resolute}" # Default to latest Ubuntu LTS, currently 26.04 Resolute Raccoon
 
 	mkdir -p "$DESTINATION"
 

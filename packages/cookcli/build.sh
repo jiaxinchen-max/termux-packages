@@ -1,11 +1,10 @@
 TERMUX_PKG_HOMEPAGE=https://cooklang.org
 TERMUX_PKG_DESCRIPTION="A suite of tools to create shopping lists and maintain food recipes"
 TERMUX_PKG_LICENSE="MIT"
-TERMUX_PKG_LICENSE_FILE="LICENSE"
 TERMUX_PKG_MAINTAINER="@termux"
-TERMUX_PKG_VERSION="0.30.0"
-TERMUX_PKG_SRCURL=https://github.com/cooklang/cookcli/archive/refs/tags/v${TERMUX_PKG_VERSION}.tar.gz
-TERMUX_PKG_SHA256=9a44b378b7e09e6e41a829e2bfd666f4da1809b281501fe5a2ea14851a01a338
+TERMUX_PKG_VERSION="0.37.0"
+TERMUX_PKG_SRCURL="https://github.com/cooklang/cookcli/archive/refs/tags/v${TERMUX_PKG_VERSION}.tar.gz"
+TERMUX_PKG_SHA256=c1d159c1fd39f5237a81fd5ede47643c475d76280a8776fd6947792c6fee015b
 TERMUX_PKG_DEPENDS="openssl"
 TERMUX_PKG_BUILD_IN_SRC=true
 TERMUX_PKG_AUTO_UPDATE=true
@@ -24,6 +23,7 @@ termux_step_pre_configure() {
 termux_step_make() {
 	npm install
 	npm run build-css
+	npm run build-js
 
 	cargo build --jobs "${TERMUX_PKG_MAKE_PROCESSES}" --target "${CARGO_TARGET_NAME}" --release
 }
