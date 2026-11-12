@@ -140,25 +140,6 @@ index 855d4ed800..cd8307ea62 100644
    deps = [
      "//base",
      "//base:i18n",
-diff --git a/components/autofill/content/renderer/form_tracker.cc b/components/autofill/content/renderer/form_tracker.cc
-index cee22fd2d2..702057affa 100644
---- a/components/autofill/content/renderer/form_tracker.cc
-+++ b/components/autofill/content/renderer/form_tracker.cc
-@@ -39,6 +39,8 @@ using blink::WebFormControlElement;
- using blink::WebFormElement;
- using blink::WebInputElement;
- 
-+#define kSubmissionSourceHistogram kSubmissionSourceHistogram_FormTracker
-+
- namespace autofill {
- 
- namespace {
-@@ -880,3 +882,5 @@ WebDocument FormTracker::GetDocument() const {
- }
- 
- }  // namespace autofill
-+
-+#undef kSubmissionSourceHistogram
 diff --git a/components/autofill/content/renderer/password_autofill_agent.cc b/components/autofill/content/renderer/password_autofill_agent.cc
 index 8cba62f2fb..4806965acc 100644
 --- a/components/autofill/content/renderer/password_autofill_agent.cc
@@ -315,25 +296,6 @@ index 97a790bd58..18696e4bb6 100644
  }  // namespace autofill
 +
 +#undef CreateUndoOrClearFormSuggestion
-diff --git a/components/autofill/core/browser/ui/autofill_resource_utils.cc b/components/autofill/core/browser/ui/autofill_resource_utils.cc
-index 93717ce822..f33ed04f5e 100644
---- a/components/autofill/core/browser/ui/autofill_resource_utils.cc
-+++ b/components/autofill/core/browser/ui/autofill_resource_utils.cc
-@@ -16,6 +16,8 @@
- #include "components/resources/android/theme_resources.h"
- #endif  // BUILDFLAG(IS_ANDROID)
- 
-+#define ShouldUseNewFopDisplay ShouldUseNewFopDisplay_AutoFillResouceUtils
-+
- namespace autofill {
- 
- namespace {
-@@ -135,3 +137,5 @@ int GetIconResourceID(Suggestion::Icon resource_name) {
- }
- 
- }  // namespace autofill
-+
-+#undef ShouldUseNewFopDisplay
 diff --git a/components/autofill/core/browser/webdata/addresses/address_autofill_table.cc b/components/autofill/core/browser/webdata/addresses/address_autofill_table.cc
 index 39a6679270..211f0841c1 100644
 --- a/components/autofill/core/browser/webdata/addresses/address_autofill_table.cc
@@ -522,25 +484,6 @@ index 3797bb2448..47ee4a9753 100644
  }  // namespace autofill
 +
 +#undef ShouldUploadEntityChange
-diff --git a/components/autofill/core/browser/webdata/valuables/valuable_sync_bridge.cc b/components/autofill/core/browser/webdata/valuables/valuable_sync_bridge.cc
-index 00dd1ff986..1a715da5f6 100644
---- a/components/autofill/core/browser/webdata/valuables/valuable_sync_bridge.cc
-+++ b/components/autofill/core/browser/webdata/valuables/valuable_sync_bridge.cc
-@@ -27,6 +27,8 @@
- #include "components/sync/protocol/entity_data.h"
- #include "components/webdata/common/web_database.h"
- 
-+#define AreAnyItemsDifferent AreAnyItemsDifferent_ValuableSyncBridge
-+
- namespace autofill {
- namespace {
- 
-@@ -675,3 +677,5 @@ EntityTable* ValuableSyncBridge::GetEntityTable() {
- }
- 
- }  // namespace autofill
-+
-+#undef AreAnyItemsDifferent
 diff --git a/components/autofill/core/browser/webdata/valuables/valuables_table.cc b/components/autofill/core/browser/webdata/valuables/valuables_table.cc
 index 9282851e03..5739cd6418 100644
 --- a/components/autofill/core/browser/webdata/valuables/valuables_table.cc
@@ -776,29 +719,6 @@ index c738b787ec..7717e59ead 100644
 +
 +#undef CreateKey
 +#undef LoadKeyFromWrapped
-diff --git a/components/enterprise/connectors/core/cloud_content_scanning/multipart_uploader_base.cc b/components/enterprise/connectors/core/cloud_content_scanning/multipart_uploader_base.cc
-index 0bfe80a3db..c3c0afa32e 100644
---- a/components/enterprise/connectors/core/cloud_content_scanning/multipart_uploader_base.cc
-+++ b/components/enterprise/connectors/core/cloud_content_scanning/multipart_uploader_base.cc
-@@ -31,6 +31,10 @@
- #include "services/network/public/mojom/data_pipe_getter.mojom.h"
- #include "services/network/public/mojom/url_response_head.mojom.h"
- 
-+#define kDataContentType   kDataContentType_multipart_uploader_base
-+#define kUploadContentType kUploadContentType_multipart_uploader_base
-+#define CreateFileDataPipeGetterBlocking CreateFileDataPipeGetterBlocking_multipart_uploader_base
-+
- namespace enterprise_connectors {
- 
- namespace {
-@@ -354,3 +358,7 @@ void MultipartUploadRequestBase::OnURLLoaderComplete(
- }
- 
- }  //  namespace enterprise_connectors
-+
-+#undef kDataContentType
-+#undef kUploadContentType
-+#undef CreateFileDataPipeGetterBlocking
 diff --git a/components/global_media_controls/public/views/media_item_ui_updated_view.cc b/components/global_media_controls/public/views/media_item_ui_updated_view.cc
 index e805c62218..ba95cb566b 100644
 --- a/components/global_media_controls/public/views/media_item_ui_updated_view.cc
@@ -2446,25 +2366,6 @@ index 3ab85842d0..39cdf94050 100644
  }  // namespace policy
 +
 +#undef ValidateHost
-diff --git a/components/accessibility_annotator/core/storage/intent_table.cc b/components/accessibility_annotator/core/storage/intent_table.cc
-index 4f859ca761..e9acd45429 100644
---- a/components/accessibility_annotator/core/storage/intent_table.cc
-+++ b/components/accessibility_annotator/core/storage/intent_table.cc
-@@ -10,6 +10,8 @@
- #include "sql/database.h"
- #include "sql/table_management_helpers.h"
- 
-+#define kVisitIdColumn kVisitIdColumn_intent_table
-+
- namespace accessibility_annotator {
- 
- namespace {
-@@ -90,3 +92,5 @@ bool IntentTable::MigrateFromCleanStateToVersion1() {
- }
- 
- }  // namespace accessibility_annotator
-+
-+#undef kVisitIdColumn
 diff --git a/components/content_settings/browser/ui/cookie_controls_util.cc b/components/content_settings/browser/ui/cookie_controls_util.cc
 index cdd1363f10..578d572f8c 100644
 --- a/components/content_settings/browser/ui/cookie_controls_util.cc
@@ -2686,3 +2587,204 @@ index 4d8cb01053..f214eb97c0 100644
  
    deps = [
      "//base",
+diff --git a/components/autofill/core/browser/data_manager/autofill_ai/in_memory_entity_suppression_manager.cc b/components/autofill/core/browser/data_manager/autofill_ai/in_memory_entity_suppression_manager.cc
+index c3abe9d461..61c060c9ef 100644
+--- a/components/autofill/core/browser/data_manager/autofill_ai/in_memory_entity_suppression_manager.cc
++++ b/components/autofill/core/browser/data_manager/autofill_ai/in_memory_entity_suppression_manager.cc
+@@ -13,6 +13,8 @@
+ #include "base/strings/strcat.h"
+ #include "base/strings/utf_string_conversions.h"
+ 
++#define kSeparator kSeparator_in_memory_entity_suppression_manager
++
+ namespace autofill {
+ 
+ namespace {
+@@ -88,3 +90,5 @@ bool InMemoryEntitySuppressionManager::IsSuppressed(
+ }
+ 
+ }  // namespace autofill
++
++#undef kSeparator
+diff --git a/components/safe_browsing/core/browser/db/v5_store.cc b/components/safe_browsing/core/browser/db/v5_store.cc
+index 3f2266fbea..9ee40eb3a8 100644
+--- a/components/safe_browsing/core/browser/db/v5_store.cc
++++ b/components/safe_browsing/core/browser/db/v5_store.cc
+@@ -35,6 +35,7 @@
+ #define kResult kResult_v5store
+ #define RecordApplyUpdateDuration RecordApplyUpdateDuration_v5store
+ #define RecordMigrationTime RecordMigrationTime_v5store
++#define RecordUpdateCategory RecordUpdateCategory_v5store
+ 
+ namespace safe_browsing {
+ 
+@@ -855,3 +856,4 @@ V5StorePtr V5StoreFactory::CreateV5Store(
+ #undef kResult
+ #undef RecordApplyUpdateDuration
+ #undef RecordMigrationTime
++#undef RecordUpdateCategory
+diff --git a/components/autofill/core/browser/ui/autofill_resource_util.cc b/components/autofill/core/browser/ui/autofill_resource_util.cc
+index 1b2bc1de53..df02f69752 100644
+--- a/components/autofill/core/browser/ui/autofill_resource_util.cc
++++ b/components/autofill/core/browser/ui/autofill_resource_util.cc
+@@ -16,6 +16,8 @@
+ #include "components/resources/android/theme_resources.h"
+ #endif  // BUILDFLAG(IS_ANDROID)
+ 
++#define ShouldUseNewFopDisplay ShouldUseNewFopDisplay_autofill_resource_util
++
+ namespace autofill {
+ 
+ namespace {
+@@ -161,3 +163,5 @@ int GetIconResourceID(Suggestion::Icon resource_name) {
+ }
+ 
+ }  // namespace autofill
++
++#undef ShouldUseNewFopDisplay
+diff --git a/components/services/storage/dom_storage/sqlite/local_storage_sqlite.cc b/components/services/storage/dom_storage/sqlite/local_storage_sqlite.cc
+index 9a766a7c00..d0ee90e64d 100644
+--- a/components/services/storage/dom_storage/sqlite/local_storage_sqlite.cc
++++ b/components/services/storage/dom_storage/sqlite/local_storage_sqlite.cc
+@@ -19,6 +19,8 @@
+ #include "sql/statement.h"
+ #include "sql/transaction.h"
+ 
++#define OnSqlError OnSqlError_local_storage_sqlite
++
+ namespace storage {
+ namespace {
+ 
+@@ -453,3 +455,5 @@ bool LocalStorageSqlite::OnMemoryDump(
+ }
+ 
+ }  // namespace storage
++
++#undef OnSqlError
+diff --git a/components/enterprise/connectors/core/cloud_content_scanning/multipart_uploader.cc b/components/enterprise/connectors/core/cloud_content_scanning/multipart_uploader.cc
+index 61ae85a6db..a968e6a632 100644
+--- a/components/enterprise/connectors/core/cloud_content_scanning/multipart_uploader.cc
++++ b/components/enterprise/connectors/core/cloud_content_scanning/multipart_uploader.cc
+@@ -36,6 +36,10 @@
+ #include "components/safe_browsing/content/browser/web_ui/web_ui_content_info_singleton.h"
+ #endif
+ 
++#define kDataContentType kDataContentType_multipart_uploader
++#define kUploadContentType kUploadContentType_multipart_uploader
++#define CreateFileDataPipeGetterBlocking CreateFileDataPipeGetterBlocking_multipart_uploader
++
+ namespace enterprise_connectors {
+ 
+ namespace {
+@@ -445,3 +449,7 @@ void MultipartUploadRequest::OnURLLoaderComplete(
+ }
+ 
+ }  // namespace enterprise_connectors
++
++#undef kDataContentType
++#undef kUploadContentType
++#undef CreateFileDataPipeGetterBlocking
+--- a/components/cbor/writer.cc
++++ b/components/cbor/writer.cc
+@@ -25,6 +25,8 @@
+ #include "components/cbor/rust/cbor_rust.h"
+ #endif
+ 
++#define ScopedMetricsReporter ScopedMetricsReporter_writer
++
+ namespace cbor {
+ 
+ BASE_FEATURE(kUseRustCborWriter, base::FEATURE_DISABLED_BY_DEFAULT);
+@@ -395,3 +397,5 @@
+ }
+ 
+ }  // namespace cbor
++
++#undef ScopedMetricsReporter
+--- a/components/translate/core/browser/translate_url_fetcher.cc
++++ b/components/translate/core/browser/translate_url_fetcher.cc
+@@ -18,6 +18,8 @@
+ #include "services/network/public/cpp/resource_request.h"
+ #include "services/network/public/cpp/simple_url_loader.h"
+ 
++#define kMaxRetry kMaxRetry_translate_url_fetcher
++
+ namespace translate {
+ 
+ namespace {
+@@ -148,3 +150,5 @@
+ }
+ 
+ }  // namespace translate
++
++#undef kMaxRetry
+--- a/components/autofill/core/browser/integrators/one_time_tokens/otp_manager_legacy_impl.cc
++++ b/components/autofill/core/browser/integrators/one_time_tokens/otp_manager_legacy_impl.cc
+@@ -44,6 +44,8 @@
+ using one_time_tokens::OneTimeTokenSource;
+ using one_time_tokens::OneTimeTokenType;
+ 
++#define GetMockOtpValue GetMockOtpValue_otp_manager_legacy_impl
++
+ namespace autofill {
+ 
+ namespace {
+@@ -330,3 +332,5 @@
+ }
+ 
+ }  // namespace autofill
++
++#undef GetMockOtpValue
+--- a/components/facilitated_payments/core/browser/network_api/get_details_for_pix_account_linking_request.cc
++++ b/components/facilitated_payments/core/browser/network_api/get_details_for_pix_account_linking_request.cc
+@@ -14,6 +14,9 @@
+ #include "components/autofill/core/browser/payments/payments_autofill_client.h"
+ #include "components/facilitated_payments/core/browser/network_api/facilitated_payments_initiate_payment_request.h"
+ 
++#define kGetDetailsForCreateInstrumentPath kGetDetailsForCreateInstrumentPath_get_details_for_pix_account_linking_request
++#define kChromePaymentsBillableServiceNumber kChromePaymentsBillableServiceNumber_get_details_for_pix_account_linking_request
++
+ namespace payments::facilitated {
+ 
+ namespace {
+@@ -106,3 +109,6 @@
+ }
+ 
+ }  // namespace payments::facilitated
++
++#undef kGetDetailsForCreateInstrumentPath
++#undef kChromePaymentsBillableServiceNumber
+--- a/components/webapps/isolated_web_apps/reading/mojo_web_bundle_parser.cc
++++ b/components/webapps/isolated_web_apps/reading/mojo_web_bundle_parser.cc
+@@ -19,6 +19,8 @@
+ #include "base/types/expected_macros.h"
+ #include "url/gurl.h"
+ 
++#define CloseFile CloseFile_mojo_web_bundle_parser
++
+ namespace web_app {
+ 
+ namespace {
+@@ -292,3 +294,5 @@
+ }
+ 
+ }  // namespace web_app
++
++#undef CloseFile
+--- a/components/page_content_annotations/content/pdf_content_fetcher.cc
++++ b/components/page_content_annotations/content/pdf_content_fetcher.cc
+@@ -33,6 +33,8 @@
+ #include "ui/gfx/geometry/rect.h"
+ #include "url/origin.h"
+ 
++#define TruncateUTF8ToByteLimit TruncateUTF8ToByteLimit_pdf_content_fetcher
++
+ namespace page_content_annotations {
+ 
+ namespace {
+@@ -396,3 +398,5 @@
+ }
+ 
+ }  // namespace page_content_annotations
++
++#undef TruncateUTF8ToByteLimit

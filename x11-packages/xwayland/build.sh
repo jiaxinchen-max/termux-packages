@@ -2,9 +2,9 @@ TERMUX_PKG_HOMEPAGE=https://xorg.freedesktop.org/wiki/
 TERMUX_PKG_DESCRIPTION="Wayland X11 server"
 TERMUX_PKG_LICENSE="MIT"
 TERMUX_PKG_MAINTAINER="@termux"
-TERMUX_PKG_VERSION="24.1.13"
+TERMUX_PKG_VERSION="24.1.15"
 TERMUX_PKG_SRCURL=https://xorg.freedesktop.org/releases/individual/xserver/xwayland-${TERMUX_PKG_VERSION}.tar.xz
-TERMUX_PKG_SHA256=173aea3d6f79609164c04528e1c8e4c9b60fcd59391c3c9dad4667297d727fb6
+TERMUX_PKG_SHA256=7311b4bcda22cfc19cb99680eb1c35cfc1ea885981310639f0429fe2948c122e
 TERMUX_PKG_AUTO_UPDATE=true
 TERMUX_PKG_DEPENDS="libandroid-shmem, libdrm, libepoxy (>= 1.5.10-6), libpciaccess, libpixman, libwayland, libwayland-protocols, libx11, libxau, libxcvt, libxfont2, libxinerama, libxkbfile, libxshmfence, opengl, openssl, xkeyboard-config, xorg-protocol-txt, xorg-xkbcomp"
 TERMUX_PKG_BUILD_DEPENDS="libwayland-cross-scanner"
@@ -35,7 +35,7 @@ TERMUX_PKG_EXTRA_CONFIGURE_ARGS="
 TERMUX_PKG_RM_AFTER_INSTALL="
 lib/xorg/protocol.txt
 share/X11/xkb/compiled
-share/man/man1/Xserver.1
+share/man/man1/Xserver.1.gz
 "
 
 termux_step_pre_configure() {

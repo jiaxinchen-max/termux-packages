@@ -31,6 +31,41 @@ shopt -u nullglob
 [[ ${#debs[@]} -eq 0 ]] && exit 0
 
 error=0
+download_jobs=()
+download_file() {
+	if ! curl --fail --silent --show-error --retry 5 --retry-all-errors --user-agent 'Termux-Packages/1.0\ (https://github.com/termux/termux-packages)' "$1" -o "$2"; then
+		echo "ERROR: Failed to download $1" >&2
+		return 1
+	fi
+}
+
+filter_dpkg_deb_warnings() {
+	sed -E '
+/^dpkg-deb: warning: parsing file '\''\/tmp\/dpkg-deb\.[[:alnum:]]+\/control'\'' near line 2 package '\''[^'\'']+:x86_64'\'':$/ {
+	N
+	/^dpkg-deb: warning: parsing file '\''\/tmp\/dpkg-deb\.[[:alnum:]]+\/control'\'' near line 2 package '\''[^'\'']+:x86_64'\'':\n '\''x86_64'\'' is not a valid architecture name in '\''Architecture'\'' field: character '\''_'\'' not allowed \(only letters, digits and characters '\''-'\''\)$/d
+}
+'
+}
+
+dpkg_deb_field() {
+	dpkg-deb -f "$1" "$2" 2> >(filter_dpkg_deb_warnings >&2)
+}
+
+download_metadata() (
+	local repo=$1 distribution=$2 component=$3 url=$4 arch=$5
+
+	if [[ ! -f "Packages-${repo}-${arch}" ]]; then
+		echo "[*] Downloading ${url}/dists/${distribution}/${component}/binary-${arch}/Packages.bz2"
+		download_file "${url}/dists/${distribution}/${component}/binary-${arch}/Packages.bz2" "Packages-${repo}-${arch}.bz2"
+		7z x "Packages-${repo}-${arch}.bz2" > /dev/null
+	fi
+	if [[ ! -f "Contents-${repo}-${arch}" ]]; then
+		echo "[*] Downloading ${url}/dists/${distribution}/Contents-${arch}.gz"
+		download_file "${url}/dists/${distribution}/Contents-${arch}.gz" "Contents-${repo}-${arch}.gz"
+		gunzip -k "Contents-${repo}-${arch}.gz"
+	fi
+)
 
 # Stage 1: Check for file conflicts between the newly built packages themselves.
 declare -a deb_arches deb_names deb_versions deb_relations
@@ -40,11 +75,11 @@ trap 'rm -f "$local_contents"' EXIT
 : > "$local_contents"
 for i in "${!debs[@]}"; do
 	deb=${debs[i]}
-	deb_arches[i]=$(dpkg-deb -f "$deb" Architecture)
-	deb_names[i]=$(dpkg-deb -f "$deb" Package)
-	deb_versions[i]=$(dpkg-deb -f "$deb" Version)
+	deb_arches[i]=$(dpkg_deb_field "$deb" Architecture)
+	deb_names[i]=$(dpkg_deb_field "$deb" Package)
+	deb_versions[i]=$(dpkg_deb_field "$deb" Version)
 	deb_relations[i]=$(
-		{ dpkg-deb -f "$deb" Conflicts; dpkg-deb -f "$deb" Replaces; dpkg-deb -f "$deb" Breaks; } |
+		{ dpkg_deb_field "$deb" Conflicts; dpkg_deb_field "$deb" Replaces; dpkg_deb_field "$deb" Breaks; } |
 			tr ',' '\n' | sed '/^[[:space:]]*$/d'
 	)
 	dpkg-deb --fsys-tarfile "$deb" | tar -t | sed -E 's|^\./||; /\/$/d' |
@@ -66,7 +101,7 @@ while IFS=$'\t' read -r path owners; do
 			if [[ "$local_arch" == "all" ]]; then
 				local_arch=${deb_arches[b]}
 			fi
-			echo "[!] \"${deb_names[a]}\" and \"${deb_names[b]}\" (local/${local_arch}) both ship \"$path\", with no Conflicts/Replaces/Breaks declared"
+			echo "::error::\"${deb_names[a]}\" and \"${deb_names[b]}\" (local/${local_arch}) both ship \"$path\", with no Conflicts/Replaces/Breaks declared"
 			error=1
 		done
 	done
@@ -87,42 +122,56 @@ for repo in $(jq --raw-output 'del(.pkg_format) | keys | .[]' repo.json); do
 	url=$(jq --raw-output '.["'"${repo}"'"].url' repo.json)
 
 	for arch in aarch64 arm i686 x86_64; do
-		if [[ ! -f "Packages-${repo}-${arch}" ]]; then
-			echo "[*] Downloading ${url}/dists/${distribution}/${component}/binary-${arch}/Packages.bz2"
-			curl -s \
-				--user-agent 'Termux-Packages/1.0\ (https://github.com/termux/termux-packages)' \
-				"${url}/dists/${distribution}/${component}/binary-${arch}/Packages.bz2" \
-				-o "Packages-${repo}-${arch}.bz2"
-			7z x "Packages-${repo}-${arch}.bz2" > /dev/null
+		download_metadata "$repo" "$distribution" "$component" "$url" "$arch" &
+		download_jobs+=("$!")
+		if (( ${#download_jobs[@]} >= 4 )); then
+			wait "${download_jobs[0]}"
+			download_jobs=("${download_jobs[@]:1}")
 		fi
-		if [[ ! -f "Contents-${repo}-${arch}" ]]; then
-			echo "[*] Downloading ${url}/dists/${distribution}/Contents-${arch}.gz"
-			curl -s \
-				--user-agent 'Termux-Packages/1.0\ (https://github.com/termux/termux-packages)' \
-				"${url}/dists/${distribution}/Contents-${arch}.gz" \
-				-o "Contents-${repo}-${arch}.gz"
-			gunzip -k "Contents-${repo}-${arch}.gz"
-		fi
+	done
+done
 
+for job in "${download_jobs[@]}"; do
+	wait "$job"
+done
+
+for repo in $(jq --raw-output 'del(.pkg_format) | keys | .[]' repo.json); do
+	distribution=$(jq --raw-output '.["'"${repo}"'"].distribution' repo.json)
+	component=$(jq --raw-output '.["'"${repo}"'"].component' repo.json)
+	url=$(jq --raw-output '.["'"${repo}"'"].url' repo.json)
+
+	for arch in aarch64 arm i686 x86_64; do
 		for deb in "${debs[@]}"; do
-			deb_arch=$(dpkg-deb -f "$deb" Architecture)
+			deb_arch=$(dpkg_deb_field "$deb" Architecture)
 			[[ "$deb_arch" == "$arch" || "$deb_arch" == "all" ]] || continue
-			pkg_name=$(dpkg-deb -f "$deb" Package)
+			pkg_name=$(dpkg_deb_field "$deb" Package)
+			deb_version=$(dpkg_deb_field "$deb" Version)
+
+			# Check that this .deb is newer than every published version of the package.
+			while read -r published_version; do
+				if dpkg --compare-versions "$deb_version" lt "$published_version"; then
+					echo "::error::\"$pkg_name\" ${deb_version} (${repo}/${arch}) is older than published ${published_version}"
+					error=1
+				fi
+			done < <(awk -v pkg="$pkg_name" '
+				$0 == "Package: " pkg { found=1; next }
+				found && /^Version: / { print $2; found=0 }
+				/^$/ { found=0 }
+			' "Packages-${repo}-${arch}")
 
 			# Check that this exact .deb filename isn't already published (missed revbump).
 			deb_name_escaped=$(printf '%s' "$(basename "$deb")" | sed 's/[.[\*^$]/\\&/g')
 			if grep -q "^Filename:.*/${deb_name_escaped}\$" "Packages-${repo}-${arch}"; then
-				echo "[!] \"$(basename "$deb")\" (${repo}/${arch}) already exists on the server"
+				echo "::error::\"$(basename "$deb")\" (${repo}/${arch}) already exists on the server"
 				error=1
 			fi
 
 			# Check that this .deb doesn't ship a file already owned by a different
 			# published package, unless a Conflicts/Replaces/Breaks relation is declared.
 			declared=$(
-				{ dpkg-deb -f "$deb" Conflicts; dpkg-deb -f "$deb" Replaces; dpkg-deb -f "$deb" Breaks; } |
+				{ dpkg_deb_field "$deb" Conflicts; dpkg_deb_field "$deb" Replaces; dpkg_deb_field "$deb" Breaks; } |
 					tr ',' '\n' | sed '/^[[:space:]]*$/d'
 			)
-			deb_version=$(dpkg-deb -f "$deb" Version)
 
 			conflicts=$(dpkg-deb --fsys-tarfile "$deb" | tar -t | sed -E 's|^\./||' |
 				awk '
@@ -145,7 +194,7 @@ for repo in $(jq --raw-output 'del(.pkg_format) | keys | .[]' repo.json); do
 						' "Packages-${repo}-${arch}" |
 							sed -E 's/^(Conflicts|Replaces|Breaks): *//' | tr ',' '\n' | sed '/^[[:space:]]*$/d')
 						termux_pkg_relations_match "$owner_declared" "$pkg_name" "$deb_version" && continue
-						echo "[!] \"$pkg_name\" and \"$owner\" (${repo}/${arch}) both ship \"$path\", with no Conflicts/Replaces/Breaks declared"
+						echo "::error::\"$pkg_name\" and \"$owner\" (${repo}/${arch}) both ship \"$path\", with no Conflicts/Replaces/Breaks declared"
 					done
 				done)
 			if [[ -n "$conflicts" ]]; then
@@ -157,7 +206,6 @@ for repo in $(jq --raw-output 'del(.pkg_format) | keys | .[]' repo.json); do
 done
 
 if [[ "$error" != 0 ]]; then
-	echo "[!] Found conflicting files between built packages, or between built and published packages!"
-	echo "[!] Please revbump package, rebase, add Conflicts/Replaces/Breaks, or tag commit with '%ci:no-build'"
+	echo "::error::Found versions older than published, or conflicting files between built packages, or between built and published packages!%0APlease bump version or add an epoch, revbump package, rebase, add Conflicts/Replaces/Breaks, or tag commit with '%ci:no-build'"
 	exit 1
 fi
