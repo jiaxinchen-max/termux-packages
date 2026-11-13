@@ -3,7 +3,7 @@ TERMUX_PKG_DESCRIPTION="Mozilla's JavaScript engine"
 TERMUX_PKG_LICENSE="MPL-2.0"
 TERMUX_PKG_MAINTAINER="@termux"
 TERMUX_PKG_VERSION="128.10.0"
-TERMUX_PKG_REVISION=2
+TERMUX_PKG_REVISION=3
 _REAL_VERSION=${TERMUX_PKG_VERSION}esr
 TERMUX_PKG_SRCURL=https://archive.mozilla.org/pub/firefox/releases/$_REAL_VERSION/source/firefox-$_REAL_VERSION.source.tar.xz
 TERMUX_PKG_SHA256=2ed83e26e41a8b3e2c7c0d13448a84dbb9b7ed65ed46bc162d629b0c6b071caf
@@ -35,7 +35,7 @@ termux_step_pre_configure() {
 	export HOST_CXX=$(command -v clang++)
 
 	# https://reviews.llvm.org/D141184
-	CXXFLAGS+=" -U__ANDROID__ -D_LIBCPP_HAS_NO_C11_ALIGNED_ALLOC"
+	CXXFLAGS+=" -U__ANDROID__ -D_LIBCPP_HAS_NO_C11_ALIGNED_ALLOC --target=${TERMUX_HOST_PLATFORM}${TERMUX_PKG_API_LEVEL}"
 	LDFLAGS+=" -llog"
 }
 

@@ -1,0 +1,32 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index c1474c7..bb74920 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -40,7 +40,8 @@ pkg_check_modules(
+   libzip
+   cairo
+   librsvg-2.0
+-  tomlplusplus)
++  )
++find_path(TOMLPLUSPLUS_INCLUDE_DIR toml++/toml.hpp REQUIRED)
+ 
+ if(CMAKE_BUILD_TYPE MATCHES Debug OR CMAKE_BUILD_TYPE MATCHES DEBUG)
+   message(STATUS "Configuring hyprcursor in Debug")
+@@ -62,7 +63,7 @@ file(
+ add_library(hyprcursor SHARED ${SRCFILES})
+ target_include_directories(
+   hyprcursor
+-  PUBLIC "./include"
++  PUBLIC "./include" "${TOMLPLUSPLUS_INCLUDE_DIR}"
+   PRIVATE "./libhyprcursor")
+ set_target_properties(
+   hyprcursor
+@@ -85,7 +86,7 @@ file(
+ add_executable(hyprcursor-util ${UTILSRCFILES})
+ target_include_directories(
+   hyprcursor-util
+-  PUBLIC "./include"
++  PUBLIC "./include" "${TOMLPLUSPLUS_INCLUDE_DIR}"
+   PRIVATE "./libhyprcursor" "./hyprcursor-util/src")
+ target_link_libraries(hyprcursor-util PkgConfig::deps hyprcursor)
+ 

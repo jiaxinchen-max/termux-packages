@@ -1,0 +1,836 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 8558e2e..41c2400 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -18,6 +18,13 @@ set(PREFIX ${CMAKE_INSTALL_PREFIX})
+ set(INCLUDE ${CMAKE_INSTALL_FULL_INCLUDEDIR})
+ set(LIBDIR ${CMAKE_INSTALL_FULL_LIBDIR})
+ 
++option(AQUAMARINE_ANDROID_BACKEND "Enable the Termux Android backend" OFF)
++if(AQUAMARINE_ANDROID_BACKEND)
++  add_compile_definitions(AQ_HAS_ANDROID_BACKEND)
++  set(AQ_LIBINPUT_REQUIREMENT libinput)
++else()
++  set(AQ_LIBINPUT_REQUIREMENT "libinput>=1.26.0")
++endif()
+ find_package(PkgConfig REQUIRED)
+ find_package(OpenGL REQUIRED COMPONENTS "GLES3")
+ find_package(Threads REQUIRED)
+@@ -27,7 +34,7 @@ pkg_check_modules(
+   REQUIRED
+   IMPORTED_TARGET
+   libseat>=0.8.0
+-  libinput>=1.26.0
++  ${AQ_LIBINPUT_REQUIREMENT}
+   wayland-client
+   wayland-protocols
+   hyprutils>=0.8.0
+@@ -60,6 +67,9 @@ endif()
+ 
+ file(GLOB_RECURSE SRCFILES CONFIGURE_DEPENDS "src/*.cpp" "include/*.hpp")
+ file(GLOB_RECURSE PUBLIC_HEADERS CONFIGURE_DEPENDS "include/*.hpp")
++if(NOT AQUAMARINE_ANDROID_BACKEND)
++  list(FILTER SRCFILES EXCLUDE REGEX "/backend/Android\\.(cpp|hpp)$")
++endif()
+ 
+ add_library(aquamarine SHARED ${SRCFILES})
+ if(deps_libinput_VERSION VERSION_GREATER_EQUAL "1.30")
+@@ -72,6 +82,10 @@ target_include_directories(
+ set_target_properties(aquamarine PROPERTIES VERSION ${AQUAMARINE_VERSION}
+                                             SOVERSION 15)
+ target_link_libraries(aquamarine OpenGL::EGL OpenGL::GLES3 PkgConfig::deps Threads::Threads)
++if(AQUAMARINE_ANDROID_BACKEND)
++  pkg_check_modules(android_render REQUIRED IMPORTED_TARGET termux-render)
++  target_link_libraries(aquamarine PkgConfig::android_render)
++endif()
+ check_include_file("sys/timerfd.h" HAS_TIMERFD)
+ pkg_check_modules(epoll IMPORTED_TARGET epoll-shim)
+ if(NOT HAS_TIMERFD AND epoll_FOUND)
+diff --git a/include/aquamarine/allocator/Allocator.hpp b/include/aquamarine/allocator/Allocator.hpp
+index 2dc1ee5..950897e 100644
+--- a/include/aquamarine/allocator/Allocator.hpp
++++ b/include/aquamarine/allocator/Allocator.hpp
+@@ -17,6 +17,7 @@ namespace Aquamarine {
+     enum eAllocatorType {
+         AQ_ALLOCATOR_TYPE_GBM = 0,
+         AQ_ALLOCATOR_TYPE_DRM_DUMB,
++        AQ_ALLOCATOR_TYPE_ANDROID,
+     };
+ 
+     class IAllocator {
+diff --git a/include/aquamarine/backend/Backend.hpp b/include/aquamarine/backend/Backend.hpp
+index bd55c7c..8efabcc 100644
+--- a/include/aquamarine/backend/Backend.hpp
++++ b/include/aquamarine/backend/Backend.hpp
+@@ -28,6 +28,7 @@ namespace Aquamarine {
+         AQ_BACKEND_DRM,
+         AQ_BACKEND_HEADLESS,
+         AQ_BACKEND_NULL,
++        AQ_BACKEND_ANDROID,
+     };
+ 
+     enum eBackendGPUDriver : uint32_t {
+diff --git a/include/aquamarine/input/Input.hpp b/include/aquamarine/input/Input.hpp
+index b22c8ae..96f115d 100644
+--- a/include/aquamarine/input/Input.hpp
++++ b/include/aquamarine/input/Input.hpp
+@@ -34,6 +34,10 @@ namespace Aquamarine {
+             Hyprutils::Signal::CSignalT<>                destroy;
+             Hyprutils::Signal::CSignalT<SKeyEvent>       key;
+             Hyprutils::Signal::CSignalT<SModifiersEvent> modifiers;
++#ifdef __ANDROID__
++            // Committed Android IME text, distinct from physical keys.
++            Hyprutils::Signal::CSignalT<uint32_t, uint32_t> unicode;
++#endif
+         } events;
+     };
+ 
+diff --git a/src/backend/Backend.cpp b/src/backend/Backend.cpp
+index dbd7147..921c87e 100644
+--- a/src/backend/Backend.cpp
++++ b/src/backend/Backend.cpp
+@@ -3,6 +3,9 @@
+ #include <aquamarine/backend/Headless.hpp>
+ #include <aquamarine/backend/DRM.hpp>
+ #include <aquamarine/backend/Null.hpp>
++#ifdef AQ_HAS_ANDROID_BACKEND
++#include <aquamarine/backend/Android.hpp>
++#endif
+ #include <aquamarine/allocator/GBM.hpp>
+ #include <hyprutils/os/FileDescriptor.hpp>
+ #include <ranges>
+@@ -40,6 +43,7 @@ static const char* backendTypeToName(eBackendType type) {
+         case AQ_BACKEND_DRM: return "drm";
+         case AQ_BACKEND_HEADLESS: return "headless";
+         case AQ_BACKEND_WAYLAND: return "wayland";
++        case AQ_BACKEND_ANDROID: return "android";
+         default: break;
+     }
+     return "invalid";
+@@ -75,11 +79,22 @@ Hyprutils::Memory::CSharedPointer<CBackend> Aquamarine::CBackend::create(const s
+     backend->log(AQ_LOG_DEBUG, "Creating an Aquamarine backend!");
+ 
+     for (auto const& b : backends) {
++#ifdef AQ_HAS_ANDROID_BACKEND
++        if (b.backendType == AQ_BACKEND_ANDROID) {
++            backend->implementations.emplace_back(CAndroidBackend::create(backend));
++            continue;
++        }
++#endif
+         if (b.backendType == AQ_BACKEND_WAYLAND) {
+             auto ref = SP<CWaylandBackend>(new CWaylandBackend(backend));
+             backend->implementations.emplace_back(ref);
+             ref->self = ref;
+         } else if (b.backendType == AQ_BACKEND_DRM) {
++#ifdef AQ_HAS_ANDROID_BACKEND
++            backend->log(AQ_LOG_ERROR, "DRM is not available in the Android backend build");
++            if (b.backendRequestMode == AQ_BACKEND_REQUEST_MANDATORY)
++                return nullptr;
++#else
+             auto ref = CDRMBackend::attempt(backend);
+             if (ref.empty()) {
+                 backend->log(AQ_LOG_ERROR, "DRM Backend failed");
+@@ -89,6 +104,7 @@ Hyprutils::Memory::CSharedPointer<CBackend> Aquamarine::CBackend::create(const s
+             for (auto const& r : ref) {
+                 backend->implementations.emplace_back(r);
+             }
++#endif
+         } else if (b.backendType == AQ_BACKEND_HEADLESS) {
+             auto ref = SP<CHeadlessBackend>(new CHeadlessBackend(backend));
+             backend->implementations.emplace_back(ref);
+@@ -159,9 +175,17 @@ bool Aquamarine::CBackend::start() {
+         return failed;
+     });
+ 
++#ifdef AQ_HAS_ANDROID_BACKEND
++    for (const auto& impl : implementations) {
++        if (impl->type() == AQ_BACKEND_ANDROID) {
++            primaryAllocator = impl->preferredAllocator();
++            break;
++        }
++    }
++#endif
+     // TODO: obviously change this when (if) we add different allocators.
+     for (auto const& b : implementations) {
+-        if (b->drmFD() >= 0) {
++        if (!primaryAllocator && b->drmFD() >= 0) {
+             auto fd = reopenDRMNode(b->drmFD());
+             if (fd < 0) {
+                 // this is critical, we cannot create an allocator properly
+diff --git a/src/backend/Session.cpp b/src/backend/Session.cpp
+index 27abc30..a74e952 100644
+--- a/src/backend/Session.cpp
++++ b/src/backend/Session.cpp
+@@ -1,5 +1,6 @@
+ #include <aquamarine/backend/Backend.hpp>
+ #include <cerrno>
++#include <stdexcept>
+ #include <fcntl.h>
+ #include "Shared.hpp"
+ 
+@@ -174,6 +175,10 @@ bool Aquamarine::CSessionDevice::supportsKMS() {
+ }
+ 
+ void Aquamarine::CSessionDevice::resolveMatchingRenderNode(udev_device* cardDevice) {
++#ifdef AQ_HAS_ANDROID_BACKEND
++    // Android output imports AHardwareBuffers and never opens a render node.
++    return;
++#else
+     if (!cardDevice)
+         return;
+ 
+@@ -282,6 +287,7 @@ void Aquamarine::CSessionDevice::resolveMatchingRenderNode(udev_device* cardDevi
+     }
+ 
+     udev_enumerate_unref(enumerate);
++#endif
+ }
+ 
+ SP<CSessionDevice> Aquamarine::CSessionDevice::openIfKMS(SP<CSession> session_, const std::string& path_) {
+@@ -845,9 +851,11 @@ void Aquamarine::CSession::handleLibinputEvent(libinput_event* e) {
+             if (libinput_event_tablet_tool_get_proximity_state(tte) == LIBINPUT_TABLET_TOOL_PROXIMITY_STATE_IN)
+                 handleLibinputTabletToolAxis(e);
+ 
++#ifndef AQ_HAS_ANDROID_BACKEND
+             if (!libinput_tablet_tool_is_unique(libinput_event_tablet_tool_get_tool(tte)) &&
+                 libinput_event_tablet_tool_get_proximity_state(tte) == LIBINPUT_TABLET_TOOL_PROXIMITY_STATE_OUT)
+                 std::erase(hlDevice->tabletTools, tool);
++#endif
+             break;
+         }
+         case LIBINPUT_EVENT_TABLET_TOOL_AXIS: {
+@@ -888,6 +896,9 @@ void Aquamarine::CSession::handleLibinputEvent(libinput_event* e) {
+ }
+ 
+ void Aquamarine::CSession::handleLibinputTabletToolAxis(libinput_event* e) {
++#ifdef AQ_HAS_ANDROID_BACKEND
++    throw std::runtime_error("The Android backend does not support libinput tablet axes");
++#else
+     auto                device   = libinput_event_get_device(e);
+     auto                data     = libinput_device_get_user_data(device);
+     auto                hlDevice = ((CLibinputDevice*)data)->self.lock();
+@@ -940,6 +951,7 @@ void Aquamarine::CSession::handleLibinputTabletToolAxis(libinput_event* e) {
+     }
+ 
+     hlDevice->tablet->events.axis.emit(event);
++#endif
+ }
+ 
+ Aquamarine::CLibinputDevice::CLibinputDevice(libinput_device* device_, Hyprutils::Memory::CWeakPointer<CSession> session_) : device(device_), session(session_) {
+@@ -1124,6 +1136,9 @@ const std::string& Aquamarine::CLibinputTablet::getName() {
+ }
+ 
+ Aquamarine::CLibinputTabletTool::CLibinputTabletTool(Hyprutils::Memory::CSharedPointer<CLibinputDevice> dev, libinput_tablet_tool* tool) : device(dev), libinputTool(tool) {
++#ifdef AQ_HAS_ANDROID_BACKEND
++    throw std::runtime_error("The Android backend does not support libinput tablet tools");
++#else
+     type   = aqTypeFromLibinput(libinput_tablet_tool_get_type(libinputTool));
+     serial = libinput_tablet_tool_get_serial(libinputTool);
+     id     = libinput_tablet_tool_get_tool_id(libinputTool);
+@@ -1145,6 +1160,7 @@ Aquamarine::CLibinputTabletTool::CLibinputTabletTool(Hyprutils::Memory::CSharedP
+         capabilities |= AQ_TABLET_TOOL_CAPABILITY_WHEEL;
+ 
+     libinput_tablet_tool_set_user_data(tool, this);
++#endif
+ }
+ 
+ Aquamarine::CLibinputTabletTool::~CLibinputTabletTool() {
+@@ -1168,6 +1184,9 @@ const std::string& Aquamarine::CLibinputTabletTool::getName() {
+ }
+ 
+ Aquamarine::CLibinputTabletPad::CLibinputTabletPad(Hyprutils::Memory::CSharedPointer<CLibinputDevice> dev) : device(dev) {
++#ifdef AQ_HAS_ANDROID_BACKEND
++    throw std::runtime_error("The Android backend does not support libinput tablet pads");
++#else
+     buttons = libinput_device_tablet_pad_get_num_buttons(device->device);
+     rings   = libinput_device_tablet_pad_get_num_rings(device->device);
+     strips  = libinput_device_tablet_pad_get_num_strips(device->device);
+@@ -1181,14 +1200,17 @@ Aquamarine::CLibinputTabletPad::CLibinputTabletPad(Hyprutils::Memory::CSharedPoi
+         if (g)
+             groups.emplace_back(g);
+     }
++#endif
+ }
+ 
+ Aquamarine::CLibinputTabletPad::~CLibinputTabletPad() {
++#ifndef AQ_HAS_ANDROID_BACKEND
+     int groups = libinput_device_tablet_pad_get_num_mode_groups(device->device);
+     for (int i = 0; i < groups; ++i) {
+         auto g = libinput_device_tablet_pad_get_mode_group(device->device, i);
+         libinput_tablet_pad_mode_group_unref(g);
+     }
++#endif
+ }
+ 
+ libinput_device* Aquamarine::CLibinputTabletPad::getLibinputHandle() {
+@@ -1204,6 +1226,9 @@ const std::string& Aquamarine::CLibinputTabletPad::getName() {
+ }
+ 
+ SP<ITabletPad::STabletPadGroup> Aquamarine::CLibinputTabletPad::createGroupFromID(int id) {
++#ifdef AQ_HAS_ANDROID_BACKEND
++    return nullptr;
++#else
+     auto libinputGroup = libinput_device_tablet_pad_get_mode_group(device->device, id);
+     libinput_tablet_pad_mode_group_ref(libinputGroup);
+ 
+@@ -1232,4 +1257,5 @@ SP<ITabletPad::STabletPadGroup> Aquamarine::CLibinputTabletPad::createGroupFromI
+     group->modes = libinput_tablet_pad_mode_group_get_num_modes(libinputGroup);
+ 
+     return group;
++#endif
+ }
+diff --git a/src/backend/Wayland.cpp b/src/backend/Wayland.cpp
+index 6af7b93..42fc398 100644
+--- a/src/backend/Wayland.cpp
++++ b/src/backend/Wayland.cpp
+@@ -18,6 +18,11 @@ using namespace Hyprutils::Math;
+ #define SP CSharedPointer
+ 
+ static std::pair<int, std::string> openExclusiveShm() {
++#ifdef __ANDROID__
++    std::string path = "@TERMUX_PREFIX@/tmp/aquamarine-XXXXXX";
++    const int   fd   = mkostemp(path.data(), O_CLOEXEC);
++    return {fd, path};
++#else
+     // Only absolute paths can be shared across different shm_open() calls
+     srand(time(nullptr));
+     std::string name = std::format("/aq{:x}", rand() % RAND_MAX);
+@@ -29,6 +34,7 @@ static std::pair<int, std::string> openExclusiveShm() {
+     }
+ 
+     return {-1, ""};
++#endif
+ }
+ 
+ static int allocateSHMFile(size_t len) {
+@@ -36,7 +42,11 @@ static int allocateSHMFile(size_t len) {
+     if (fd < 0)
+         return -1;
+ 
++#ifdef __ANDROID__
++    unlink(name.c_str());
++#else
+     shm_unlink(name.c_str());
++#endif
+ 
+     int ret;
+     do {
+diff --git a/src/backend/drm/DRM.cpp b/src/backend/drm/DRM.cpp
+index e2e9b7c..3a92410 100644
+--- a/src/backend/drm/DRM.cpp
++++ b/src/backend/drm/DRM.cpp
+@@ -82,7 +82,7 @@ static udev_enumerate* enumDRMCards(udev* udev) {
+         return nullptr;
+ 
+     udev_enumerate_add_match_subsystem(enumerate, "drm");
+-#ifdef __linux__
++#if defined(__linux__) && !defined(AQ_HAS_ANDROID_BACKEND)
+     // https://github.com/wulf7/libudev-devd/issues/11
+     udev_enumerate_add_match_property(enumerate, "DEVTYPE", "drm_minor");
+ #endif
+@@ -2720,8 +2720,7 @@ bool Aquamarine::CDRMOutput::commitState(bool onlyTest) {
+ 
+             if (!drmFB && EVDI && backend->dumbAllocator) {
+                 if (!backend->cpuCopyFallback) {
+-                    backend->backend->log(AQ_LOG_DEBUG,
+-                                          std::format("drm: direct KMS import of primary buffer failed on {}, switching to dumb-buffer CPU copy", backend->gpuName));
++                    backend->backend->log(AQ_LOG_DEBUG, std::format("drm: direct KMS import of primary buffer failed on {}, switching to dumb-buffer CPU copy", backend->gpuName));
+                     backend->cpuCopyFallback = true;
+                 }
+ 
+diff --git a/include/aquamarine/backend/Android.hpp b/include/aquamarine/backend/Android.hpp
+new file mode 100644
+index 0000000..f95bd70
+--- /dev/null
++++ b/include/aquamarine/backend/Android.hpp
+@@ -0,0 +1,74 @@
++#pragma once
++
++#include "Backend.hpp"
++#include "../buffer/Buffer.hpp"
++#include "../output/Output.hpp"
++#include "../input/Input.hpp"
++#include <hyprutils/os/FileDescriptor.hpp>
++
++struct AHardwareBuffer;
++struct LorieBuffer;
++
++namespace Aquamarine {
++    // Native Android buffers are deliberately not advertised as Linux dmabufs.
++    class CAndroidBuffer : public IBuffer {
++      public:
++        CAndroidBuffer(const SAllocatorBufferParams& params);
++        ~CAndroidBuffer() override;
++        eBufferCapability caps() override;
++        eBufferType       type() override;
++        void              update(const Hyprutils::Math::CRegion& damage) override;
++        bool              isSynchronous() override;
++        bool              good() override;
++        SDMABUFAttrs      dmabuf() override;
++        AHardwareBuffer*  hardwareBuffer() const;
++        void              beginRender();
++        void              endRender();
++        bool              hasRendered() const;
++        bool              present();
++
++      private:
++        LorieBuffer* m_buffer       = nullptr;
++        bool         m_registered   = false;
++        bool         m_renderLocked = false;
++        bool         m_hasRendered  = false;
++        void         unlockRender();
++    };
++
++    class CAndroidBackend : public IBackendImplementation {
++      public:
++        static Hyprutils::Memory::CSharedPointer<CAndroidBackend> create(Hyprutils::Memory::CSharedPointer<CBackend> backend);
++        ~CAndroidBackend() override;
++        eBackendType                                               type() override;
++        bool                                                       start() override;
++        std::vector<Hyprutils::Memory::CSharedPointer<SPollFD>>    pollFDs() override;
++        int                                                        drmFD() override;
++        int                                                        drmRenderNodeFD() override;
++        bool                                                       dispatchEvents() override;
++        uint32_t                                                   capabilities() override;
++        void                                                       onReady() override;
++        std::vector<SDRMFormat>                                    getRenderFormats() override;
++        std::vector<SDRMFormat>                                    getCursorFormats() override;
++        bool                                                       createOutput(const std::string& name = "") override;
++        Hyprutils::Memory::CSharedPointer<IAllocator>              preferredAllocator() override;
++        std::vector<Hyprutils::Memory::CSharedPointer<IAllocator>> getAllocators() override;
++        Hyprutils::Memory::CWeakPointer<IBackendImplementation>    getPrimary() override;
++
++      private:
++        CAndroidBackend(Hyprutils::Memory::CSharedPointer<CBackend> backend);
++        Hyprutils::Memory::CWeakPointer<CBackend>        m_backend;
++        Hyprutils::Memory::CWeakPointer<CAndroidBackend> m_self;
++        Hyprutils::Memory::CSharedPointer<IOutput>       m_output;
++        Hyprutils::Memory::CSharedPointer<IKeyboard>     m_keyboard;
++        Hyprutils::Memory::CSharedPointer<IPointer>      m_pointer;
++        Hyprutils::Memory::CSharedPointer<ITouch>        m_touch;
++        Hyprutils::Memory::CSharedPointer<IAllocator>    m_allocator;
++        Hyprutils::OS::CFileDescriptor                   m_timer;
++        std::vector<uint8_t>                             m_input;
++        size_t                                           m_discard = 0;
++        int                                              m_width = 1280, m_height = 720, m_refresh = 60;
++        int                                              m_inputWidth = 1280, m_inputHeight = 720;
++        bool                                             m_connected  = false;
++        bool                                             m_inputReady = false;
++    };
++}
+diff --git a/src/backend/Android.cpp b/src/backend/Android.cpp
+new file mode 100644
+index 0000000..5e0362a
+--- /dev/null
++++ b/src/backend/Android.cpp
+@@ -0,0 +1,410 @@
++#include <aquamarine/backend/Android.hpp>
++#include <aquamarine/allocator/Swapchain.hpp>
++#include <hyprutils/memory/SharedPtr.hpp>
++#include <GLES3/gl3.h>
++#include <algorithm>
++#include <array>
++#include <cerrno>
++#include <csignal>
++#include <cstring>
++#include <cstdlib>
++#include <stdexcept>
++#include <sys/timerfd.h>
++#include <unistd.h>
++
++extern "C" {
++#include <termux/render/render.h>
++}
++
++using namespace Aquamarine;
++using namespace Hyprutils::Memory;
++using namespace Hyprutils::Math;
++
++static int positiveEnv(const char* name, int fallback, int maximum) {
++    const auto* text = std::getenv(name);
++    if (!text)
++        return fallback;
++    char*      end   = nullptr;
++    const auto value = std::strtol(text, &end, 10);
++    if (end == text || *end || value <= 0 || value > maximum)
++        throw std::runtime_error(std::string("Invalid Android output option: ") + name);
++    return value;
++}
++
++CAndroidBuffer::CAndroidBuffer(const SAllocatorBufferParams& params) {
++    if (params.size.x <= 0 || params.size.y <= 0 || params.size.x > 16384 || params.size.y > 16384 || (params.format != DRM_FORMAT_INVALID && params.format != DRM_FORMAT_ARGB8888))
++        return;
++    size     = params.size;
++    opaque   = false;
++    m_buffer = LorieBuffer_allocate(size.x, size.y, AHARDWAREBUFFER_FORMAT_B8G8R8A8_UNORM, LORIEBUFFER_AHARDWAREBUFFER);
++    if (!m_buffer)
++        return;
++    const auto* desc = LorieBuffer_description(m_buffer);
++    if (!desc->buffer || desc->format != AHARDWAREBUFFER_FORMAT_B8G8R8A8_UNORM)
++        return;
++    m_registered = registerBufferToRender(m_buffer) == 0;
++}
++
++CAndroidBuffer::~CAndroidBuffer() {
++    unlockRender();
++    if (m_registered)
++        unregisterBufferFromRender(m_buffer);
++    LorieBuffer_release(m_buffer);
++}
++
++eBufferCapability CAndroidBuffer::caps() {
++    return BUFFER_CAPABILITY_NONE;
++}
++eBufferType CAndroidBuffer::type() {
++    return BUFFER_TYPE_MISC;
++}
++void CAndroidBuffer::update(const CRegion&) {
++    ;
++}
++bool CAndroidBuffer::isSynchronous() {
++    return false;
++}
++bool CAndroidBuffer::good() {
++    return m_registered;
++}
++SDMABUFAttrs CAndroidBuffer::dmabuf() {
++    // Format metadata is used by swapchain selection; success stays false and no FD is exported.
++    return {.success = false, .size = size, .format = DRM_FORMAT_ARGB8888};
++}
++AHardwareBuffer* CAndroidBuffer::hardwareBuffer() const {
++    return m_buffer ? LorieBuffer_description(m_buffer)->buffer : nullptr;
++}
++void CAndroidBuffer::beginRender() {
++    if (m_renderLocked)
++        return;
++    auto* state = get_serverState();
++    if (!state || !waylandConnectionAlive())
++        throw std::runtime_error("Android render connection lost");
++    lorie_mutex_lock(&state->lock, &state->lockingPid);
++    m_renderLocked = true;
++}
++void CAndroidBuffer::endRender() {
++    if (!m_renderLocked)
++        return;
++    glFinish();
++    m_hasRendered = true;
++    unlockRender();
++}
++bool CAndroidBuffer::hasRendered() const {
++    return m_hasRendered;
++}
++void CAndroidBuffer::unlockRender() {
++    if (!m_renderLocked)
++        return;
++    if (auto* state = get_serverState())
++        lorie_mutex_unlock(&state->lock, &state->lockingPid);
++    m_renderLocked = false;
++}
++bool CAndroidBuffer::present() {
++    endRender();
++    if (!good() || !waylandConnectionAlive())
++        return false;
++    // Modeset validation may commit a freshly allocated buffer before any draw.
++    if (!m_hasRendered)
++        return true;
++    beginRender();
++    // This backend does not claim DRM timeline support. Finish GPU writes before
++    // releasing the same shared lock used by the Android texture consumer.
++    glFinish();
++    auto* state                = get_serverState();
++    state->rootWindowTextureID = LorieBuffer_description(m_buffer)->id;
++    state->drawRequested       = true;
++    state->waitForNextFrame    = false;
++    if (rendererCond)
++        pthread_cond_signal(rendererCond);
++    unlockRender();
++    return true;
++}
++
++class CAndroidAllocator : public IAllocator {
++  public:
++    explicit CAndroidAllocator(CSharedPointer<CBackend> backend) : m_backend(backend) {
++        ;
++    }
++    CSharedPointer<IBuffer> acquire(const SAllocatorBufferParams& params, CSharedPointer<CSwapchain>) override {
++        auto buffer = makeShared<CAndroidBuffer>(params);
++        return buffer->good() ? buffer : nullptr;
++    }
++    CSharedPointer<CBackend> getBackend() override {
++        return m_backend.lock();
++    }
++    int drmFD() override {
++        return -1;
++    }
++    eAllocatorType type() override {
++        return AQ_ALLOCATOR_TYPE_ANDROID;
++    }
++
++  private:
++    CWeakPointer<CBackend> m_backend;
++};
++
++class CAndroidKeyboard : public IKeyboard {
++  public:
++    const std::string& getName() override {
++        return m_name;
++    }
++
++  private:
++    const std::string m_name = "Termux Android keyboard";
++};
++class CAndroidPointer : public IPointer {
++  public:
++    const std::string& getName() override {
++        return m_name;
++    }
++
++  private:
++    const std::string m_name = "Termux Android pointer";
++};
++class CAndroidTouch : public ITouch {
++  public:
++    const std::string& getName() override {
++        return m_name;
++    }
++
++  private:
++    const std::string m_name = "Termux Android touch";
++};
++
++class CAndroidOutput : public IOutput {
++  public:
++    explicit CAndroidOutput(CSharedPointer<CAndroidBackend> backend) : m_backend(backend) {
++        ;
++    }
++    bool test() override {
++        const auto& pending = state->state();
++        return !pending.adaptiveSync && pending.presentationMode == AQ_OUTPUT_PRESENTATION_VSYNC && pending.explicitInFence < 0 && pending.explicitOutFence < 0 &&
++            (pending.drmFormat == DRM_FORMAT_INVALID || pending.drmFormat == DRM_FORMAT_ARGB8888);
++    }
++    bool commit() override {
++        if (!test())
++            return false;
++        const auto  snapshot = state->snapshot();
++        const auto& pending  = snapshot.state();
++        if (snapshot.error())
++            return false;
++        auto buffer = dynamic_cast<CAndroidBuffer*>(pending.buffer.get());
++        if (pending.buffer && (!buffer || !buffer->present()))
++            return false;
++        enabled    = pending.enabled;
++        needsFrame = false;
++        events.commit.emit();
++        state->consume(snapshot);
++        if (buffer && buffer->hasRendered()) {
++            // Render completion only: the protocol supplies no Android presentation timestamp.
++            events.present.emit(SPresentEvent{.presented = true, .flags = 0});
++        }
++        return true;
++    }
++    CSharedPointer<IBackendImplementation> getBackend() override {
++        return m_backend.lock();
++    }
++    std::vector<SDRMFormat> getRenderFormats() override {
++        return m_backend->getRenderFormats();
++    }
++    bool pendingPageFlip() override {
++        return false;
++    }
++    bool pendingIdleFrame() override {
++        return needsFrame;
++    }
++    void scheduleFrame(const scheduleFrameReason) override {
++        needsFrame = true;
++    }
++
++  private:
++    CWeakPointer<CAndroidBackend> m_backend;
++};
++
++CAndroidBackend::CAndroidBackend(CSharedPointer<CBackend> backend) : m_backend(backend) {
++    ;
++}
++CSharedPointer<CAndroidBackend> CAndroidBackend::create(CSharedPointer<CBackend> backend) {
++    auto result    = CSharedPointer<CAndroidBackend>(new CAndroidBackend(backend));
++    result->m_self = result;
++    return result;
++}
++CAndroidBackend::~CAndroidBackend() {
++    m_output.reset();
++    m_allocator.reset();
++    if (m_connected)
++        stopEventLoop();
++}
++eBackendType CAndroidBackend::type() {
++    return AQ_BACKEND_ANDROID;
++}
++int CAndroidBackend::drmFD() {
++    return -1;
++}
++int CAndroidBackend::drmRenderNodeFD() {
++    return -1;
++}
++uint32_t CAndroidBackend::capabilities() {
++    return 0;
++} // software cursor, rendered by Hyprland
++std::vector<SDRMFormat> CAndroidBackend::getRenderFormats() {
++    return {{.drmFormat = DRM_FORMAT_ARGB8888, .modifiers = {DRM_FORMAT_MOD_INVALID}}};
++}
++std::vector<SDRMFormat> CAndroidBackend::getCursorFormats() {
++    return {};
++}
++CSharedPointer<IAllocator> CAndroidBackend::preferredAllocator() {
++    return m_allocator;
++}
++std::vector<CSharedPointer<IAllocator>> CAndroidBackend::getAllocators() {
++    return {m_allocator};
++}
++CWeakPointer<IBackendImplementation> CAndroidBackend::getPrimary() {
++    return {};
++}
++bool CAndroidBackend::start() {
++    m_width       = positiveEnv("AQ_ANDROID_WIDTH", 1280, 16384);
++    m_height      = positiveEnv("AQ_ANDROID_HEIGHT", 720, 16384);
++    m_refresh     = positiveEnv("AQ_ANDROID_REFRESH", 60, 240);
++    m_inputWidth  = m_width;
++    m_inputHeight = m_height;
++    setKeycodeFormat(LORIE_KEYCODE_EVDEV);
++    setScreenConfig(m_width, m_height, m_refresh, AHARDWAREBUFFER_FORMAT_B8G8R8A8_UNORM, LORIEBUFFER_AHARDWAREBUFFER);
++    if (connectToRender() != 0)
++        return false;
++    m_connected             = true;
++    m_allocator             = makeShared<CAndroidAllocator>(m_backend.lock());
++    m_timer                 = Hyprutils::OS::CFileDescriptor{timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC)};
++    const auto       period = 1000000000LL / m_refresh;
++    const itimerspec timer  = {.it_interval = {.tv_sec = 0, .tv_nsec = period}, .it_value = {.tv_sec = 0, .tv_nsec = period}};
++    return m_timer.isValid() && timerfd_settime(m_timer.get(), 0, &timer, nullptr) == 0;
++}
++void CAndroidBackend::onReady() {
++    if (m_keyboard)
++        return;
++
++    m_keyboard = makeShared<CAndroidKeyboard>();
++    m_pointer  = makeShared<CAndroidPointer>();
++    m_touch    = makeShared<CAndroidTouch>();
++    // onReady runs inside CBackend::start, before the consumer's input and seat
++    // managers exist. Publish devices only once its event loop starts polling.
++    m_backend->addIdleEvent(makeShared<std::function<void(void)>>([weak = m_self] {
++        const auto self = weak.lock();
++        if (!self)
++            return;
++
++        self->m_backend->events.newKeyboard.emit(self->m_keyboard);
++        self->m_backend->events.newPointer.emit(self->m_pointer);
++        self->m_backend->events.newTouch.emit(self->m_touch);
++        self->m_inputReady = true;
++    }));
++    if (!createOutput())
++        throw std::runtime_error("Unable to create Android output");
++}
++bool CAndroidBackend::createOutput(const std::string& name) {
++    if (m_output)
++        return false;
++    auto output         = makeShared<CAndroidOutput>(m_self.lock());
++    output->name        = name.empty() ? "ANDROID-1" : name;
++    output->description = "Termux Android display";
++    output->make        = "Termux";
++    output->model       = "Android";
++    output->modes.emplace_back(makeShared<SOutputMode>(Vector2D{m_width, m_height}, m_refresh * 1000, true));
++    output->swapchain = CSwapchain::create(m_allocator, m_self.lock());
++    m_output          = output;
++    m_backend->events.newOutput.emit(m_output);
++    return true;
++}
++std::vector<CSharedPointer<SPollFD>> CAndroidBackend::pollFDs() {
++    if (!m_connected)
++        return {};
++    return {makeShared<SPollFD>(get_conn_fd(), [this] { dispatchEvents(); }), makeShared<SPollFD>(m_timer.get(), [this] {
++                uint64_t ticks = 0;
++                if (read(m_timer.get(), &ticks, sizeof(ticks)) == sizeof(ticks) && m_output && m_output->needsFrame)
++                    m_output->events.frame.emit();
++                if (!waylandConnectionAlive())
++                    throw std::runtime_error("Android display connection closed");
++            })};
++}
++bool CAndroidBackend::dispatchEvents() {
++    // Leave queued input on the socket until all devices have been published.
++    if (!m_inputReady)
++        return true;
++
++    std::array<uint8_t, 4096> bytes{};
++    ssize_t                   count = 0;
++    // Bound each dispatch so a continuous input stream cannot starve frame dispatch.
++    size_t received = 0;
++    while (received < 65536 && (count = recv(get_conn_fd(), bytes.data(), bytes.size(), MSG_DONTWAIT)) > 0) {
++        m_input.insert(m_input.end(), bytes.begin(), bytes.begin() + count);
++        received += count;
++    }
++    if (count == 0 || (count < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR))
++        throw std::runtime_error("Android input connection closed");
++    const auto now    = std::chrono::steady_clock::now().time_since_epoch();
++    const auto timeMs = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
++    size_t     offset = 0;
++    while (offset < m_input.size()) {
++        if (m_discard) {
++            const auto skip = std::min(m_discard, m_input.size() - offset);
++            offset += skip;
++            m_discard -= skip;
++            continue;
++        }
++        if (m_input.size() - offset < sizeof(lorieEvent))
++            break;
++        lorieEvent event{};
++        std::memcpy(&event, m_input.data() + offset, sizeof(event));
++        offset += sizeof(event);
++        if (event.type == EVENT_CLIPBOARD_SEND) {
++            if (event.clipboardSend.count > 16 * 1024 * 1024)
++                throw std::runtime_error("Android clipboard payload exceeds limit");
++            m_discard = event.clipboardSend.count;
++        } else if (event.type == EVENT_SCREEN_SIZE) {
++            if (event.screenSize.name_size > 4096)
++                throw std::runtime_error("Android screen name exceeds limit");
++            m_discard = event.screenSize.name_size;
++            if (event.screenSize.width && event.screenSize.height) {
++                m_inputWidth  = event.screenSize.width;
++                m_inputHeight = event.screenSize.height;
++            }
++        } else if (event.type == EVENT_KEY)
++            m_keyboard->events.key.emit(IKeyboard::SKeyEvent{.timeMs = timeMs, .key = event.key.key, .pressed = event.key.state != 0});
++        else if (event.type == EVENT_UNICODE) {
++            const auto code = event.unicode.code;
++            if (code && code <= 0x10FFFF && (code < 0xD800 || code > 0xDFFF))
++                m_keyboard->events.unicode.emit(timeMs, code);
++        } else if (event.type == EVENT_MOUSE) {
++            if (!event.mouse.detail) {
++                if (event.mouse.relative) {
++                    const Vector2D delta{event.mouse.x * m_width / m_inputWidth, event.mouse.y * m_height / m_inputHeight};
++                    m_pointer->events.move.emit(IPointer::SMoveEvent{.timeMs = timeMs, .delta = delta, .unaccel = delta});
++                } else
++                    m_pointer->events.warp.emit(
++                        IPointer::SWarpEvent{.timeMs = timeMs, .absolute = {event.mouse.x / m_inputWidth, event.mouse.y / m_inputHeight}, .output = m_output});
++            } else if (event.mouse.detail <= 3) {
++                const std::array<uint32_t, 3> buttons = {BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
++                m_pointer->events.button.emit(IPointer::SButtonEvent{.timeMs = timeMs, .button = buttons.at(event.mouse.detail - 1), .pressed = event.mouse.down != 0});
++            } else if (event.mouse.detail <= 5) {
++                const bool horizontal = event.mouse.detail == 4;
++                m_pointer->events.axis.emit(IPointer::SAxisEvent{.timeMs = timeMs,
++                                                                 .axis   = horizontal ? IPointer::AQ_POINTER_AXIS_HORIZONTAL : IPointer::AQ_POINTER_AXIS_VERTICAL,
++                                                                 .source = IPointer::AQ_POINTER_AXIS_SOURCE_WHEEL,
++                                                                 .delta  = horizontal ? event.mouse.x : event.mouse.y});
++            }
++            m_pointer->events.frame.emit();
++        } else if (event.type == EVENT_TOUCH) {
++            const Vector2D pos{static_cast<double>(event.touch.x) / m_inputWidth, static_cast<double>(event.touch.y) / m_inputHeight};
++            if (event.touch.type == 18)
++                m_touch->events.down.emit(ITouch::SDownEvent{.timeMs = timeMs, .touchID = event.touch.id, .pos = pos});
++            else if (event.touch.type == 19)
++                m_touch->events.up.emit(ITouch::SUpEvent{.timeMs = timeMs, .touchID = event.touch.id});
++            else if (event.touch.type == 20)
++                m_touch->events.move.emit(ITouch::SMotionEvent{.timeMs = timeMs, .touchID = event.touch.id, .pos = pos});
++            m_touch->events.frame.emit();
++        }
++    }
++    m_input.erase(m_input.begin(), m_input.begin() + offset);
++    return true;
++}

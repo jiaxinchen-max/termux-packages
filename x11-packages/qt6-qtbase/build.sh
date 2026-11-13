@@ -4,10 +4,9 @@ TERMUX_PKG_LICENSE="GPL-3.0-only"
 TERMUX_PKG_LICENSE_FILE="LICENSES/GPL-3.0-only.txt"
 TERMUX_PKG_MAINTAINER="@termux"
 TERMUX_PKG_VERSION="6.12.0"
-TERMUX_PKG_REVISION=1
-TERMUX_PKG_SRCURL="https://download.qt.io/official_releases/qt/${TERMUX_PKG_VERSION%.*}/${TERMUX_PKG_VERSION}/submodules/qtbase-everywhere-src-${TERMUX_PKG_VERSION}.tar.xz"
-TERMUX_PKG_SHA256=a951bd163c7b80fc6b8c88d7668fb56abf91c152373e13c10666763238131307
-TERMUX_PKG_DEPENDS="brotli, double-conversion, freetype, glib, harfbuzz, krb5, libandroid-posix-semaphore, libandroid-shmem, libc++, libdrm, libglvnd-dev, libice, libicu, libjpeg-turbo, libpng, libsm, libsqlite, libuuid, libx11, libxcb, libxi, libxkbcommon, libwayland, opengl, openssl, pcre2, vulkan-loader, xcb-util-cursor, xcb-util-image, xcb-util-keysyms, xcb-util-renderutil, xcb-util-wm, xdg-utils, zlib, zstd"
+TERMUX_PKG_SRCURL="file:///home/builder/qt-icu79-auto-20261111/inputs/qtbase-patched-source.tar.gz"
+TERMUX_PKG_SHA256=52a930d87d3c2e0cf172f1b3c7c730cfa5291918d2a433ac8914f78879fa1ad4
+TERMUX_PKG_DEPENDS="brotli, double-conversion, freetype, glib, harfbuzz, krb5, libandroid-posix-semaphore, libandroid-shmem, libc++, libdrm, libglvnd-dev, libice, libicu (>= 79), libicu (<< 80), libjpeg-turbo, libpng, libsm, libsqlite, libuuid, libx11, libxcb, libxi, libxkbcommon, libwayland, opengl, openssl, pcre2, vulkan-loader, xcb-util-cursor, xcb-util-image, xcb-util-keysyms, xcb-util-renderutil, xcb-util-wm, xdg-utils, zlib, zstd"
 # gtk3 dependency is a run-time dependency only for the gtk platformtheme subpackage
 TERMUX_PKG_BUILD_DEPENDS="binutils-cross, cups, gdk-pixbuf, gtk3, libwayland-protocols, pango, vulkan-headers, vulkan-loader-generic"
 # qt6-qtbase now contains include/qt6/QtWaylandClient/QWaylandClientExtension instead of qt6-qtwayland
@@ -157,4 +156,38 @@ termux_step_post_make_install() {
 	find ${TERMUX_PREFIX}/lib/qt6 -type f -name target_qt.conf \
 		-exec echo "{}" \; \
 		-exec cat "{}" \;
+}
+
+TERMUX_PKG_REVISION='1+termuxkwin1'
+_QT_AUTO_CANDIDATE=/home/builder/qt-icu79-auto-20261111
+TERMUX_BUILT_PACKAGES_DIRECTORY="$_QT_AUTO_CANDIDATE/build-root/.built-packages"
+
+eval "$(declare -f termux_step_pre_configure | sed '1s/termux_step_pre_configure/qt_auto_original_pre_configure/')"
+termux_step_pre_configure() {
+    if ! grep -Eq '^#define U_ICU_VERSION_MAJOR_NUM[[:space:]]+79$' "$TERMUX_PREFIX/include/unicode/uvernum.h"; then
+        termux_error_exit "The automatically installed ICU must have ABI 79."
+    fi
+    qt_auto_original_pre_configure
+}
+
+termux_step_make_install() {
+    DESTDIR="$_QT_AUTO_CANDIDATE/install-stage" ninja -j "$TERMUX_PKG_MAKE_PROCESSES" install
+    mkdir -p "$_QT_AUTO_CANDIDATE/install-stage$TERMUX_PREFIX/opt/qt6"
+    cp -a "$TERMUX_PREFIX/opt/qt6/cross" "$_QT_AUTO_CANDIDATE/install-stage$TERMUX_PREFIX/opt/qt6/"
+}
+
+eval "$(declare -f termux_step_post_make_install | sed '1s/termux_step_post_make_install/qt_auto_original_post_make_install/')"
+termux_step_post_make_install() (
+    TERMUX_PREFIX="$_QT_AUTO_CANDIDATE/install-stage$TERMUX_PREFIX"
+    qt_auto_original_post_make_install
+)
+
+eval "$(declare -f termux_step_install_license | sed '1s/termux_step_install_license/qt_auto_original_install_license/')"
+termux_step_install_license() (
+    TERMUX_PREFIX="$_QT_AUTO_CANDIDATE/install-stage$TERMUX_PREFIX"
+    qt_auto_original_install_license
+)
+
+termux_step_copy_into_massagedir() {
+    cp -a "$_QT_AUTO_CANDIDATE/install-stage/." "$TERMUX_PKG_MASSAGEDIR/"
 }

@@ -1,0 +1,38 @@
+#!/data/data/com.termux/files/usr/bin/sh
+set -eu
+
+if [ "$#" -ne 2 ]; then
+    echo 'Usage: hyprland-android CONFIG.lua PRIVATE_RUNTIME_DIRECTORY' >&2
+    exit 2
+fi
+config=$1
+runtime=$2
+prefix='@TERMUX_PREFIX@'
+case "$config:$runtime" in
+    /*:/*) ;;
+    *) echo 'Config and runtime paths must be absolute' >&2; exit 2 ;;
+esac
+[ -r "$config" ] || { echo "Unreadable Hyprland config: $config" >&2; exit 1; }
+[ -d "$runtime" ] && [ ! -L "$runtime" ] && [ -O "$runtime" ] || {
+    echo 'Runtime directory must exist, belong to this user, and not be a symlink' >&2
+    exit 1
+}
+chmod 700 "$runtime"
+[ -x "$prefix/bin/Hyprland" ] || { echo 'Hyprland binary missing' >&2; exit 1; }
+dispatch="$prefix/lib/hyprland/android/libhyprland-system-gl.so"
+[ -r "$dispatch" ] || { echo 'Hyprland Android EGL dispatcher missing' >&2; exit 1; }
+[ -r "$prefix/lib/hyprland/android/libvndksupport.so" ] || {
+    echo 'Hyprland Android driver namespace library missing' >&2
+    exit 1
+}
+
+unset WAYLAND_DISPLAY DISPLAY HYPRLAND_INSTANCE_SIGNATURE
+unset KWIN_COMPOSE KWIN_DRM_DEVICES KWIN_DRM_NO_AMS
+unset EGL_PLATFORM GBM_BACKEND MESA_LOADER_DRIVER_OVERRIDE GALLIUM_DRIVER
+unset LIBGL_ALWAYS_SOFTWARE WLR_BACKENDS WLR_RENDERER
+export XDG_RUNTIME_DIR="$runtime"
+export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=Hyprland
+export XDG_DATA_DIRS="$prefix/share${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
+export HYPRLAND_ANDROID_BACKEND=1
+export LD_PRELOAD="$dispatch"
+exec "$prefix/bin/Hyprland" --config "$config"

@@ -1,0 +1,10 @@
+TERMUX_PKG_HOMEPAGE=https://xcb.freedesktop.org/
+TERMUX_PKG_DESCRIPTION="Human-readable XCB error and request names"
+TERMUX_PKG_LICENSE=MIT
+TERMUX_PKG_MAINTAINER="@jiaxinchen-max"
+TERMUX_PKG_VERSION=1.0.1
+TERMUX_PKG_SRCURL=https://xcb.freedesktop.org/dist/xcb-util-errors-1.0.1.tar.xz
+TERMUX_PKG_SHA256=5628c87b984259ad927bacd8a42958319c36bdf4b065887803c9d820fb80f357
+TERMUX_PKG_DEPENDS=libxcb
+TERMUX_PKG_BUILD_DEPENDS=xcb-proto
+TERMUX_PKG_EXTRA_CONFIGURE_ARGS="--disable-static"

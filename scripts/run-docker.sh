@@ -198,6 +198,7 @@ if ! $SUDO docker container inspect $CONTAINER_NAME > /dev/null 2>&1; then
 		--name $CONTAINER_NAME \
 		-p 8080:8080\
 		-p 8081:8081\
+		-p 7022:22 \
 		--volume $VOLUME \
 		--volume $HOME/termux-builder:$CONTAINER_WORKSPACE_DIR \
 		$SEC_OPT \

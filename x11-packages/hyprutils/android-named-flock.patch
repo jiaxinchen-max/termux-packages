@@ -1,0 +1,21 @@
+diff --git a/src/os/Semaphore.cpp b/src/os/Semaphore.cpp
+index 6877741..fa14836 100644
+--- a/src/os/Semaphore.cpp
++++ b/src/os/Semaphore.cpp
+@@ -13,7 +13,16 @@ using namespace Hyprutils;
+ using namespace Hyprutils::OS;
+ 
+ CSemaphore::CSemaphore(const char* name) {
++#ifdef __ANDROID__
++    // Android has no POSIX shm namespace. This object only needs a named flock,
++    // so use a persistent private file; unlinking it would split concurrent locks.
++    std::string safeName;
++    for (const unsigned char c : std::string_view{name})
++        safeName += std::format("{:02x}", c);
++    m_fd = open(std::format("@TERMUX_PREFIX@/tmp/hu_{}", safeName).c_str(), O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0600);
++#else
+     m_fd = shm_open(std::format("/hu_{}", name).c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0600);
++#endif
+ 
+     if (m_fd == -1)
+         return;

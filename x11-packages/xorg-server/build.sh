@@ -4,16 +4,17 @@ TERMUX_PKG_LICENSE="MIT"
 TERMUX_PKG_MAINTAINER="@termux"
 # Keep version of `tigervnc` package aligned with this package, revbump tigervnc after modifying patches of this package
 TERMUX_PKG_VERSION="21.1.16"
-TERMUX_PKG_REVISION=3
-TERMUX_PKG_SRCURL=http://127.0.0.1:8081/termux-packages/xserver.tar.gz
-TERMUX_PKG_SHA256=5c7dc766724f8a43373b28fd7c7fe6e7c535822b10df857f14dc1a0be3cbf2c2
+TERMUX_PKG_REVISION=5
+TERMUX_PKG_SRCURL="file://${TERMUX_PKG_BUILDER_DIR}/xserver.tar.gz"
+TERMUX_PKG_SHA256=9ad4df182990aeeb470d4d3e7b2251d258c3a1158294e36bef52f9ca68a814bb
 # We can not update it automatically because tigervnc server version must be aligned with xorg-server.
 TERMUX_PKG_AUTO_UPDATE=false
-TERMUX_PKG_DEPENDS="libandroid-shmem, libdrm, libpciaccess, libpixman, libx11, libxau, libxcvt, libxfont2, libxinerama, libxkbfile, libxshmfence, opengl, openssl, xkeyboard-config, xorg-protocol-txt, xorg-xkbcomp"
+TERMUX_PKG_DEPENDS="libandroid-shmem, libdrm, libepoxy (>= 1.5.10-6), libpciaccess, libpixman, libx11, libxau, libxcvt, libxfont2, libxinerama, libxkbfile, libxshmfence (>= 1.3.3-2), opengl, openssl, xkeyboard-config, xorg-protocol-txt, xorg-xkbcomp"
 TERMUX_PKG_BUILD_DEPENDS="mesa-dev"
 
 # Needed for Xephyr
-TERMUX_PKG_BUILD_DEPENDS="xcb-util, xcb-util-image, xcb-util-keysyms, xcb-util-renderutil, xcb-util-wm"
+TERMUX_PKG_BUILD_DEPENDS="xcb-util, xcb-util-image, xcb-util-keysyms, xcb-util-renderutil, xcb-util-wm, mesa-dev, libepoxy"
+
 
 TERMUX_PKG_RECOMMENDS="xf86-video-dummy, xf86-input-void"
 TERMUX_PKG_NO_STATICSPLIT=true
@@ -50,7 +51,7 @@ ac_cv_path_RAWCPP=/usr/bin/cpp
 --disable-linux-acpi
 --disable-linux-apm
 --enable-xorg
---disable-glamor
+--enable-glamor
 --disable-dmx
 --enable-xvfb
 --disable-xnest
